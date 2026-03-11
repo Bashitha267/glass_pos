@@ -6,7 +6,12 @@ CREATE TABLE IF NOT EXISTS users (
     username VARCHAR(50) NOT NULL UNIQUE,
     password VARCHAR(255) NOT NULL,
     role ENUM('admin', 'employee') NOT NULL DEFAULT 'employee',
-    contact_number VARCHAR(15),
+    full_name VARCHAR(100) NOT NULL,
+    contact_number VARCHAR(15) NOT NULL,
+    nic_number VARCHAR(20) DEFAULT NULL,
+    address TEXT DEFAULT NULL,
+    profile_pic VARCHAR(255) DEFAULT NULL,
+    system_access TINYINT(1) DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -37,6 +42,7 @@ CREATE TABLE IF NOT EXISTS container_items (
     pallets INT NOT NULL,
     qty_per_pallet INT NOT NULL,
     total_qty INT NOT NULL,
+    sold_qty INT DEFAULT 0,
     FOREIGN KEY (container_id) REFERENCES containers(id) ON DELETE CASCADE,
     FOREIGN KEY (brand_id) REFERENCES brands(id)
 );
@@ -73,3 +79,109 @@ CREATE TABLE IF NOT EXISTS container_payments (
     payment_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (container_id) REFERENCES containers(id) ON DELETE CASCADE
 );
+
+-- Delivery System Tables
+CREATE TABLE IF NOT EXISTS customers (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    contact_number VARCHAR(15),
+    address TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS deliveries (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    delivery_date DATE NOT NULL,
+    total_expenses DECIMAL(15, 2) DEFAULT 0.00,
+    total_sales DECIMAL(15, 2) DEFAULT 0.00,
+    created_by INT NOT NULL,
+    status ENUM('pending', 'completed') DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (created_by) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS delivery_employees (
+    delivery_id INT NOT NULL,
+    user_id INT NOT NULL,
+    PRIMARY KEY (delivery_id, user_id),
+    FOREIGN KEY (delivery_id) REFERENCES deliveries(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS delivery_expenses (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    delivery_id INT NOT NULL,
+    expense_name VARCHAR(100) NOT NULL,
+    amount DECIMAL(15, 2) NOT NULL,
+    FOREIGN KEY (delivery_id) REFERENCES deliveries(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS delivery_customers (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    delivery_id INT NOT NULL,
+    customer_id INT NOT NULL,
+    subtotal DECIMAL(15, 2) DEFAULT 0.00,
+    status ENUM('pending', 'delivered') DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (delivery_id) REFERENCES deliveries(id) ON DELETE CASCADE,
+    FOREIGN KEY (customer_id) REFERENCES customers(id)
+);
+
+CREATE TABLE IF NOT EXISTS delivery_items (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    delivery_customer_id INT NOT NULL,
+    container_item_id INT NOT NULL,
+    qty INT NOT NULL,
+    cost_price DECIMAL(15, 2) NOT NULL,
+    selling_price DECIMAL(15, 2) NOT NULL,
+    total DECIMAL(15, 2) NOT NULL,
+    FOREIGN KEY (delivery_customer_id) REFERENCES delivery_customers(id) ON DELETE CASCADE,
+    FOREIGN KEY (container_item_id) REFERENCES container_items(id)
+);
+
+CREATE TABLE IF NOT EXISTS delivery_ledger (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    delivery_id INT NOT NULL,
+    action_type ENUM('CREATED','DELETED','EDITED') NOT NULL,
+    notes TEXT,
+    performed_by INT NOT NULL,
+    performed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (delivery_id) REFERENCES deliveries(id) ON DELETE CASCADE,
+    FOREIGN KEY (performed_by) REFERENCES users(id)
+);
+
+-- ────────────────────────────────────────
+-- Field Operations (recorded by employees)
+-- ────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS delivery_item_damages (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    delivery_item_id INT NOT NULL,
+    damaged_qty INT DEFAULT 0,
+    recorded_by INT NOT NULL,
+    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (delivery_item_id) REFERENCES delivery_items(id) ON DELETE CASCADE,
+    FOREIGN KEY (recorded_by) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS delivery_field_expenses (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    delivery_id INT NOT NULL,
+    expense_name VARCHAR(100) NOT NULL,
+    amount DECIMAL(15,2) NOT NULL,
+    added_by INT NOT NULL,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (delivery_id) REFERENCES deliveries(id) ON DELETE CASCADE,
+    FOREIGN KEY (added_by) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS delivery_proof_photos (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    delivery_customer_id INT NOT NULL,
+    photo_path VARCHAR(255) NOT NULL,
+    uploaded_by INT NOT NULL,
+    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (delivery_customer_id) REFERENCES delivery_customers(id) ON DELETE CASCADE,
+    FOREIGN KEY (uploaded_by) REFERENCES users(id)
+);
+

@@ -142,12 +142,12 @@ if (isset($_GET['logout'])) {
             </div>
 
             <!-- New Delivery Card -->
-            <div class="glass-card p-6 flex flex-col items-center justify-center text-center space-y-4">
+            <a href="nwdelivery.php" class="glass-card p-6 flex flex-col items-center justify-center text-center space-y-4">
                 <div class="w-16 h-16 bg-amber-500/20 border-2 border-amber-400/40 rounded-2xl flex items-center justify-center shadow-inner">
                     <i class="fa-solid fa-truck-fast text-2xl text-amber-400"></i>
                 </div>
                 <h3 class="font-bold text-sm uppercase tracking-[0.1em]">New Delivery</h3>
-            </div>
+            </a>
  
             <!-- Manage Stocks Card -->
             <a href="addcontainer.php" class="glass-card p-6 flex flex-col items-center justify-center text-center space-y-4">
@@ -156,14 +156,14 @@ if (isset($_GET['logout'])) {
                 </div>
                 <h3 class="font-bold text-sm uppercase tracking-[0.1em]">Manage Stocks</h3>
             </a>
- 
-            <!-- Manage Employees Card -->
-            <div class="glass-card p-6 flex flex-col items-center justify-center text-center space-y-4">
+         <a href="manageEmploy.php" class="glass-card p-6 flex flex-col items-center justify-center text-center space-y-4">
                 <div class="w-16 h-16 bg-purple-500/20 border-2 border-purple-400/40 rounded-2xl flex items-center justify-center shadow-inner">
                     <i class="fa-solid fa-user-tie text-2xl text-purple-400"></i>
                 </div>
                 <h3 class="font-bold text-sm uppercase tracking-[0.1em]">Manage Employees</h3>
-            </div>
+            </a>
+            <!-- Manage Employees Card -->
+   
 
             <!-- Container History Card -->
             <div class="glass-card p-6 flex flex-col items-center justify-center text-center space-y-4">

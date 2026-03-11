@@ -4,11 +4,14 @@ require_once 'config.php';
 
 function login($username, $password) {
     global $pdo;
-    $stmt = $pdo->prepare('SELECT id, username, password, role FROM users WHERE username = ?');
+    $stmt = $pdo->prepare('SELECT id, username, password, role, system_access FROM users WHERE username = ?');
     $stmt->execute([$username]);
     $user = $stmt->fetch();
 
     if ($user && password_verify($password, $user['password'])) {
+        if (!$user['system_access']) {
+            return false; // Access denied
+        }
         $_SESSION['user_id'] = $user['id'];
         $_SESSION['username'] = $user['username'];
         $_SESSION['role'] = $user['role'];
