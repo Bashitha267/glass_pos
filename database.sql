@@ -3,15 +3,14 @@ USE glass_pos;
 
 CREATE TABLE IF NOT EXISTS users (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    username VARCHAR(50) NOT NULL UNIQUE,
-    password VARCHAR(255) NOT NULL,
+    username VARCHAR(50) DEFAULT NULL UNIQUE,
+    password VARCHAR(255) DEFAULT NULL,
     role ENUM('admin', 'employee') NOT NULL DEFAULT 'employee',
     full_name VARCHAR(100) NOT NULL,
     contact_number VARCHAR(15) NOT NULL,
     nic_number VARCHAR(20) DEFAULT NULL,
     address TEXT DEFAULT NULL,
     profile_pic VARCHAR(255) DEFAULT NULL,
-    system_access TINYINT(1) DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -150,10 +149,7 @@ CREATE TABLE IF NOT EXISTS delivery_ledger (
     FOREIGN KEY (performed_by) REFERENCES users(id)
 );
 
--- ────────────────────────────────────────
 -- Field Operations (recorded by employees)
--- ────────────────────────────────────────
-
 CREATE TABLE IF NOT EXISTS delivery_item_damages (
     id INT AUTO_INCREMENT PRIMARY KEY,
     delivery_item_id INT NOT NULL,
@@ -184,4 +180,27 @@ CREATE TABLE IF NOT EXISTS delivery_proof_photos (
     FOREIGN KEY (delivery_customer_id) REFERENCES delivery_customers(id) ON DELETE CASCADE,
     FOREIGN KEY (uploaded_by) REFERENCES users(id)
 );
+CREATE TABLE IF NOT EXISTS banks (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
+CREATE TABLE IF NOT EXISTS delivery_payments (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    delivery_customer_id INT NOT NULL,
+    amount DECIMAL(15, 2) NOT NULL,
+    payment_type ENUM('Cash', 'Account Transfer', 'Cheque', 'Card') NOT NULL,
+    bank_id INT DEFAULT NULL,
+    cheque_number VARCHAR(50) DEFAULT NULL,
+    proof_image VARCHAR(255) DEFAULT NULL,
+    payment_date DATE NOT NULL,
+    recorded_by INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (delivery_customer_id) REFERENCES delivery_customers(id) ON DELETE CASCADE,
+    FOREIGN KEY (bank_id) REFERENCES banks(id) ON DELETE SET NULL,
+    FOREIGN KEY (recorded_by) REFERENCES users(id)
+);
+
+ALTER TABLE delivery_items ADD COLUMN IF NOT EXISTS damaged_qty INT DEFAULT 0;
+ALTER TABLE delivery_items ADD COLUMN IF NOT EXISTS bill_image VARCHAR(255) DEFAULT NULL;

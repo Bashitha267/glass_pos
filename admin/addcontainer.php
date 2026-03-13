@@ -398,22 +398,22 @@ $containers = $stmt->fetchAll();
         <div class="glass-card bg-slate-800/80 p-4 sm:p-6 mb-8 border-slate-700">
             <form method="GET" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-4 items-end">
                 <div class="sm:col-span-2 lg:col-span-2 relative">
-                    <label class="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Search</label>
+                    <label class="text-[10px] uppercase font-black text-slate-400 mb-1 block tracking-widest">Search</label>
                     <div class="relative">
                         <i class="fa-solid fa-search absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"></i>
                         <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="ID or Brand..." class="input-glass w-full pl-12 bg-slate-900/40 border-slate-700 text-white placeholder:text-slate-500 focus:ring-2 focus:ring-cyan-500 auto-search">
                     </div>
                 </div>
                 <div>
-                    <label class="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Start Date</label>
+                    <label class="text-[10px] uppercase font-black text-slate-400 mb-1 block tracking-widest">Start Date</label>
                     <input type="date" name="start_date" value="<?php echo htmlspecialchars($start_date); ?>" class="input-glass w-full bg-slate-900/40 border-slate-700 text-white" onchange="this.form.submit()">
                 </div>
                 <div>
-                    <label class="text-[10px] uppercase font-bold text-slate-400 mb-1 block">End Date</label>
+                    <label class="text-[10px] uppercase font-black text-slate-400 mb-1 block tracking-widest">End Date</label>
                     <input type="date" name="end_date" value="<?php echo htmlspecialchars($end_date); ?>" class="input-glass w-full bg-slate-900/40 border-slate-700 text-white" onchange="this.form.submit()">
                 </div>
                 <div>
-                    <label class="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Payment Status</label>
+                    <label class="text-[10px] uppercase font-black text-slate-400 mb-1 block tracking-widest">Payment Status</label>
                     <select name="payment_status" class="input-glass w-full bg-slate-900/40 border-slate-700 text-white" onchange="this.form.submit()">
                         <option value="" class="bg-slate-800">All Status</option>
                         <option value="pending" <?php echo $payment_status === 'pending' ? 'selected' : ''; ?> class="bg-slate-800">Pending</option>
