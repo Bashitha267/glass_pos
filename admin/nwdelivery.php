@@ -69,39 +69,82 @@ if ($action == 'save_delivery') {
     try {
         $pdo->beginTransaction();
         $delivery_date = $_POST['delivery_date'];
+        $editing_id = $_POST['editing_id'] ?? null;
         $employees = json_decode($_POST['employees'], true) ?? [];
         $expenses  = json_decode($_POST['expenses'],  true) ?? [];
         $customers = json_decode($_POST['customers'], true) ?? [];
         if (empty($customers) || empty($employees)) throw new Exception("Need at least one employee and one customer.");
+
+        if ($editing_id) {
+            // Revert old stock before deleting old items
+            $old_items = $pdo->prepare("SELECT di.container_item_id, di.qty FROM delivery_items di JOIN delivery_customers dc ON di.delivery_customer_id = dc.id WHERE dc.delivery_id = ?");
+            $old_items->execute([$editing_id]);
+            foreach ($old_items->fetchAll() as $it) {
+                $pdo->prepare("UPDATE container_items SET sold_qty = GREATEST(0, sold_qty - ?) WHERE id = ?")->execute([$it['qty'], $it['container_item_id']]);
+            }
+            // Clear old associations
+            $pdo->prepare("DELETE FROM delivery_employees WHERE delivery_id = ?")->execute([$editing_id]);
+            $pdo->prepare("DELETE FROM delivery_expenses WHERE delivery_id = ?")->execute([$editing_id]);
+            $pdo->prepare("DELETE FROM delivery_customers WHERE delivery_id = ?")->execute([$editing_id]);
+            
+            $delivery_id = $editing_id;
+            $pdo->prepare("UPDATE deliveries SET delivery_date = ?, total_expenses = ?, total_sales = '0.00' WHERE id = ?")
+                ->execute([$delivery_date, 0, $delivery_id]);
+        } else {
+            $stmt = $pdo->prepare("INSERT INTO deliveries (delivery_date, total_expenses, total_sales, created_by) VALUES (?, '0.00', '0.00', ?)");
+            $stmt->execute([$delivery_date, $user_id]);
+            $delivery_id = $pdo->lastInsertId();
+        }
+
         $total_expenses = 0;
-        foreach ($expenses as $exp) $total_expenses += (float)$exp['amount'];
+        foreach ($expenses as $exp) {
+            $total_expenses += (float)$exp['amount'];
+            $pdo->prepare("INSERT INTO delivery_expenses (delivery_id, expense_name, amount) VALUES (?, ?, ?)")->execute([$delivery_id, $exp['name'], $exp['amount']]);
+        }
+        
+        foreach ($employees as $emp_id) {
+            $pdo->prepare("INSERT INTO delivery_employees (delivery_id, user_id) VALUES (?, ?)")->execute([$delivery_id, $emp_id]);
+        }
+
         $grand_total_sales = 0;
-        $stmt = $pdo->prepare("INSERT INTO deliveries (delivery_date, total_expenses, total_sales, created_by) VALUES (?, ?, '0.00', ?)");
-        $stmt->execute([$delivery_date, $total_expenses, $user_id]);
-        $delivery_id = $pdo->lastInsertId();
-        $stmt = $pdo->prepare("INSERT INTO delivery_employees (delivery_id, user_id) VALUES (?, ?)");
-        foreach ($employees as $emp_id) $stmt->execute([$delivery_id, $emp_id]);
-        $stmt = $pdo->prepare("INSERT INTO delivery_expenses (delivery_id, expense_name, amount) VALUES (?, ?, ?)");
-        foreach ($expenses as $exp) $stmt->execute([$delivery_id, $exp['name'], $exp['amount']]);
-        foreach ($customers as $c) {
+        foreach ($customers as $index => $c) {
             $customer_subtotal = 0;
-            $stmt = $pdo->prepare("INSERT INTO delivery_customers (delivery_id, customer_id, subtotal) VALUES (?, ?, 0.00)");
+            $customer_discount = 0;
+            $stmt = $pdo->prepare("INSERT INTO delivery_customers (delivery_id, customer_id, subtotal, discount) VALUES (?, ?, 0.00, 0.00)");
             $stmt->execute([$delivery_id, $c['customer_id']]);
             $dc_id = $pdo->lastInsertId();
+
+            // Handle Bill Image
+            $bill = null;
+            $bill_key = "bill_" . $index;
+            if (isset($_FILES[$bill_key]) && $_FILES[$bill_key]['error'] === UPLOAD_ERR_OK) {
+                $bill = time() . '_' . $index . '_route_bill_' . $_FILES[$bill_key]['name'];
+                if (!is_dir('../uploads/bills')) mkdir('../uploads/bills', 0777, true);
+                move_uploaded_file($_FILES[$bill_key]['tmp_name'], '../uploads/bills/' . $bill);
+            } elseif (!empty($c['existing_bill'])) {
+                $bill = $c['existing_bill'];
+            }
+
             foreach ($c['items'] as $item) {
                 $qty = (int)$item['qty'];
-                $line_total = $qty * (float)$item['selling_price'];
+                $dmg = (int)($item['damaged_qty'] ?? 0);
+                $disc = (float)($item['discount'] ?? 0);
+                $line_total = ($qty - $dmg) * (float)$item['selling_price'] - $disc;
                 $customer_subtotal += $line_total;
+                $customer_discount += $disc;
+                
                 $pdo->prepare("UPDATE container_items SET sold_qty = sold_qty + ? WHERE id = ? AND (total_qty - sold_qty) >= ?")->execute([$qty, $item['item_id'], $qty]);
-                $pdo->prepare("INSERT INTO delivery_items (delivery_customer_id, container_item_id, qty, cost_price, selling_price, total) VALUES (?, ?, ?, ?, ?, ?)")
-                    ->execute([$dc_id, $item['item_id'], $qty, (float)$item['cost_price'], (float)$item['selling_price'], $line_total]);
+                $pdo->prepare("INSERT INTO delivery_items (delivery_customer_id, container_item_id, qty, damaged_qty, cost_price, selling_price, total, bill_image) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+                    ->execute([$dc_id, $item['item_id'], $qty, $dmg, (float)$item['cost_price'], (float)$item['selling_price'], $line_total, $bill]);
             }
-            $pdo->prepare("UPDATE delivery_customers SET subtotal = ? WHERE id = ?")->execute([$customer_subtotal, $dc_id]);
+            $pdo->prepare("UPDATE delivery_customers SET subtotal = ?, discount = ? WHERE id = ?")->execute([$customer_subtotal, $customer_discount, $dc_id]);
             $grand_total_sales += $customer_subtotal;
         }
-        $pdo->prepare("UPDATE deliveries SET total_sales = ? WHERE id = ?")->execute([$grand_total_sales, $delivery_id]);
-        $pdo->prepare("INSERT INTO delivery_ledger (delivery_id, action_type, notes, performed_by) VALUES (?, 'CREATED', ?, ?)")
-            ->execute([$delivery_id, "Route started for {$delivery_date}.", $user_id]);
+        
+        $pdo->prepare("UPDATE deliveries SET total_sales = ?, total_expenses = ? WHERE id = ?")->execute([$grand_total_sales, $total_expenses, $delivery_id]);
+        $pdo->prepare("INSERT INTO delivery_ledger (delivery_id, action_type, notes, performed_by) VALUES (?, ?, ?, ?)")
+            ->execute([$delivery_id, $editing_id ? 'UPDATED' : 'CREATED', "Route details ".($editing_id ? 'modified' : 'started')." for {$delivery_date}.", $user_id]);
+        
         $pdo->commit();
         echo json_encode(['success' => true, 'delivery_id' => $delivery_id]);
     } catch (Exception $e) { if ($pdo->inTransaction()) $pdo->rollBack(); echo json_encode(['success' => false, 'message' => $e->getMessage()]); }
@@ -114,19 +157,20 @@ if ($action == 'view_delivery') {
     $del->execute([$id]);
     $delivery = $del->fetch(PDO::FETCH_ASSOC);
     if (!$delivery) { echo json_encode(['success' => false, 'message' => 'Not found']); exit; }
-    $emps = $pdo->prepare("SELECT u.full_name, u.contact_number FROM delivery_employees de JOIN users u ON de.user_id = u.id WHERE de.delivery_id = ?");
+    $emps = $pdo->prepare("SELECT u.id, u.full_name, u.contact_number FROM delivery_employees de JOIN users u ON de.user_id = u.id WHERE de.delivery_id = ?");
     $emps->execute([$id]);
     $delivery['employees'] = $emps->fetchAll(PDO::FETCH_ASSOC);
     $exps = $pdo->prepare("SELECT expense_name, amount FROM delivery_expenses WHERE delivery_id = ? ORDER BY id");
     $exps->execute([$id]);
     $delivery['expenses'] = $exps->fetchAll(PDO::FETCH_ASSOC);
-    $custs = $pdo->prepare("SELECT dc.id, dc.subtotal, dc.status, c.name, c.contact_number, c.address FROM delivery_customers dc JOIN customers c ON dc.customer_id = c.id WHERE dc.delivery_id = ? ORDER BY dc.id");
+    $custs = $pdo->prepare("SELECT dc.id, dc.customer_id, dc.subtotal, dc.status, c.name, c.contact_number, c.address FROM delivery_customers dc JOIN customers c ON dc.customer_id = c.id WHERE dc.delivery_id = ? ORDER BY dc.id");
     $custs->execute([$id]);
     $custRows = $custs->fetchAll(PDO::FETCH_ASSOC);
     foreach ($custRows as &$cr) {
-        $items = $pdo->prepare("SELECT di.*, b.name as brand_name, c.container_number FROM delivery_items di JOIN container_items ci ON di.container_item_id = ci.id JOIN brands b ON ci.brand_id = b.id JOIN containers c ON ci.container_id = c.id WHERE di.delivery_customer_id = ?");
+        $items = $pdo->prepare("SELECT di.*, b.name as brand_name, c.container_number, (ci.total_qty - ci.sold_qty) as available_qty FROM delivery_items di JOIN container_items ci ON di.container_item_id = ci.id JOIN brands b ON ci.brand_id = b.id JOIN containers c ON ci.container_id = c.id WHERE di.delivery_customer_id = ?");
         $items->execute([$cr['id']]);
         $cr['items'] = $items->fetchAll(PDO::FETCH_ASSOC);
+        $cr['bill_image'] = $cr['items'][0]['bill_image'] ?? null;
     }
     unset($cr);
     $delivery['customers'] = $custRows;
@@ -177,7 +221,9 @@ $total_pages = max(1, ceil($total_records / $limit));
 
 $query = "SELECT d.*, 
     (SELECT COUNT(*) FROM delivery_customers WHERE delivery_id = d.id) as customer_count,
-    (SELECT GROUP_CONCAT(u.full_name SEPARATOR ', ') FROM delivery_employees de JOIN users u ON de.user_id = u.id WHERE de.delivery_id = d.id) as employee_names
+    (SELECT GROUP_CONCAT(u.full_name SEPARATOR ', ') FROM delivery_employees de JOIN users u ON de.user_id = u.id WHERE de.delivery_id = d.id) as employee_names,
+    (SELECT IFNULL(SUM(amount), 0) FROM delivery_payments dp JOIN delivery_customers dc ON dp.delivery_customer_id = dc.id WHERE dc.delivery_id = d.id) as got_payments,
+    (d.total_sales - d.total_expenses - IFNULL((SELECT SUM(di.qty * di.cost_price) FROM delivery_items di JOIN delivery_customers dc ON di.delivery_customer_id = dc.id WHERE dc.delivery_id = d.id), 0)) as est_profit
     FROM deliveries d $whereClause ORDER BY d.id DESC LIMIT $limit OFFSET $offset";
 $stmt = $pdo->prepare($query);
 $stmt->execute($params);
@@ -224,7 +270,9 @@ $deliveries = $stmt->fetchAll();
             border-radius: 14px;
             outline: none;
             transition: all 0.3s;
-            font-size: 13px;
+            font-size: 14px;
+            font-weight: 700;
+            color: #0f172a;
         }
 
         .input-glass:focus {
@@ -248,7 +296,7 @@ $deliveries = $stmt->fetchAll();
 <body class="flex flex-col">
 
     <header class="glass-header sticky top-0 z-40 py-4">
-        <div class="max-w-7xl mx-auto px-6 flex items-center justify-between">
+        <div class="px-6 flex items-center justify-between">
             <div class="flex items-center space-x-5">
                 <a href="dashboard.php" class="text-slate-800 hover:text-cyan-600 transition-colors p-2.5 rounded-2xl hover:bg-slate-100">
                     <i class="fa-solid fa-arrow-left text-xl"></i>
@@ -268,27 +316,27 @@ $deliveries = $stmt->fetchAll();
         </div>
     </header>
 
-    <main class="max-w-7xl mx-auto w-full px-6 py-10">
+    <main class="w-full px-6 py-10">
 
         <!-- Filters -->
         <div class="glass-card p-6 mb-8 border-slate-200/50">
-            <form method="GET" class="grid grid-cols-1 md:grid-cols-12 gap-6 items-end">
+            <form method="GET" class="grid grid-cols-1 md:grid-cols-12 gap-6 items-end" id="filterForm">
                 <div class="md:col-span-5 relative">
                     <label class="text-[10px] uppercase font-black text-slate-600 mb-2 ml-1 block tracking-widest">Search ID</label>
-                    <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="Enter Trip ID..." class="input-glass w-full h-[48px]">
+                    <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="Enter Trip ID..." class="input-glass w-full h-[48px]" onchange="this.form.submit()">
                 </div>
                 <div class="md:col-span-3">
                     <label class="text-[10px] uppercase font-black text-slate-600 mb-2 ml-1 block tracking-widest">Start Date</label>
-                    <input type="date" name="start_date" value="<?php echo htmlspecialchars($start_date); ?>" class="input-glass w-full h-[48px]">
+                    <input type="date" name="start_date" value="<?php echo htmlspecialchars($start_date); ?>" class="input-glass w-full h-[48px]" onchange="this.form.submit()">
                 </div>
                 <div class="md:col-span-3">
                     <label class="text-[10px] uppercase font-black text-slate-600 mb-2 ml-1 block tracking-widest">End Date</label>
-                    <input type="date" name="end_date" value="<?php echo htmlspecialchars($end_date); ?>" class="input-glass w-full h-[48px]">
+                    <input type="date" name="end_date" value="<?php echo htmlspecialchars($end_date); ?>" class="input-glass w-full h-[48px]" onchange="this.form.submit()">
                 </div>
                 <div class="md:col-span-1">
-                    <button type="submit" class="w-full h-[48px] bg-slate-100 text-slate-900 rounded-2xl hover:bg-slate-200 transition-all flex items-center justify-center border border-slate-200">
-                        <i class="fa-solid fa-magnifying-glass"></i>
-                    </button>
+                    <a href="nwdelivery.php" class="w-full h-[48px] bg-rose-50 text-rose-500 rounded-2xl hover:bg-rose-100 transition-all flex items-center justify-center border border-rose-200" title="Reset Filters">
+                        <i class="fa-solid fa-rotate-right"></i>
+                    </a>
                 </div>
             </form>
         </div>
@@ -302,9 +350,12 @@ $deliveries = $stmt->fetchAll();
                             <th class="px-6 py-5">TRIP ID</th>
                             <th class="px-6 py-5">DATE</th>
                             <th class="px-6 py-5">ASSIGNED STAFF</th>
-                            <th class="px-6 py-5 text-center">STOPS</th>
+
                             <th class="px-6 py-5">EXPENSES</th>
                             <th class="px-6 py-5">REVENUE</th>
+                            <th class="px-6 py-5">GOT PAYMENTS</th>
+                            <th class="px-6 py-5">EST. PROFIT</th>
+                            <th class="px-6 py-5 text-center">SETTLE</th>
                             <th class="px-6 py-5 text-center">STATUS</th>
                             <th class="px-6 py-5 text-right">ACTION</th>
                         </tr>
@@ -317,11 +368,16 @@ $deliveries = $stmt->fetchAll();
                             <td class="px-6 py-4">
                                 <p class="text-[11px] font-bold text-slate-800 leading-tight"><?php echo htmlspecialchars($d['employee_names'] ?: 'Unassigned'); ?></p>
                             </td>
-                            <td class="px-6 py-4 text-center">
-                                <span class="bg-indigo-50 text-indigo-600 px-2.5 py-1 rounded-lg text-[10px] font-black"><?php echo $d['customer_count']; ?> STOPS</span>
-                            </td>
+
                             <td class="px-6 py-4 font-bold text-rose-600 text-xs">LKR <?php echo number_format($d['total_expenses'], 2); ?></td>
                             <td class="px-6 py-4 font-black text-emerald-600 text-xs">LKR <?php echo number_format($d['total_sales'], 2); ?></td>
+                            <td class="px-6 py-4 font-black text-emerald-700 text-xs">LKR <?php echo number_format($d['got_payments'], 2); ?></td>
+                            <td class="px-6 py-4 font-black text-xs <?php echo $d['est_profit'] >= 0 ? 'text-indigo-600' : 'text-rose-600'; ?>">LKR <?php echo number_format($d['est_profit'], 2); ?></td>
+                            <td class="px-6 py-4 text-center">
+                                <button onclick="viewRouteDetails(<?php echo $d['id']; ?>)" class="bg-indigo-600 hover:bg-black text-white px-5 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest shadow-lg shadow-indigo-600/20 transition-all">
+                                    <i class="fa-solid fa-money-bill-transfer mr-1.5"></i> Pay
+                                </button>
+                            </td>
                             <td class="px-6 py-4 text-center">
                                 <span class="px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider <?php echo $d['status'] == 'completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'; ?>">
                                     <?php echo $d['status']; ?>
@@ -329,8 +385,9 @@ $deliveries = $stmt->fetchAll();
                             </td>
                             <td class="px-6 py-4 text-right">
                                 <div class="flex items-center justify-end space-x-2">
-                                    <button onclick="viewRouteDetails(<?php echo $d['id']; ?>)" class="p-2 text-slate-400 hover:text-indigo-600 transition-colors"><i class="fa-solid fa-eye text-sm"></i></button>
-                                    <button onclick="confirmDeleteTrip(<?php echo $d['id']; ?>)" class="p-2 text-slate-400 hover:text-rose-600 transition-colors"><i class="fa-solid fa-trash-can text-sm"></i></button>
+                                    <button onclick="openEditModal(<?php echo $d['id']; ?>)" class="p-2 text-slate-400 hover:text-amber-500 transition-colors" title="Edit Trip Details"><i class="fa-solid fa-pen-to-square text-sm"></i></button>
+                                    <button onclick="viewRouteDetails(<?php echo $d['id']; ?>)" class="p-2 text-slate-400 hover:text-indigo-600 transition-colors" title="View Trip"><i class="fa-solid fa-eye text-sm"></i></button>
+                                    <button onclick="confirmDeleteTrip(<?php echo $d['id']; ?>)" class="p-2 text-slate-400 hover:text-rose-600 transition-colors" title="Delete Trip"><i class="fa-solid fa-trash-can text-sm"></i></button>
                                 </div>
                             </td>
                         </tr>
@@ -358,7 +415,7 @@ $deliveries = $stmt->fetchAll();
     <div id="route-modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden">
         <div class="glass-card w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
             <div class="p-6 border-b border-white/40 flex items-center justify-between bg-white/20">
-                <h3 class="text-xl font-black font-['Outfit'] text-slate-900">Initialize Supply Trip</h3>
+                <h3 id="modal-title" class="text-xl font-black font-['Outfit'] text-slate-900">Initialize Supply Trip</h3>
                 <button onclick="closeModal()" class="text-slate-500 hover:text-slate-800"><i class="fa-solid fa-times text-xl"></i></button>
             </div>
             
@@ -367,18 +424,18 @@ $deliveries = $stmt->fetchAll();
                     <!-- Base Details -->
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
                         <div>
-                            <label class="text-[9px] uppercase font-black text-slate-400 mb-1.5 ml-1 block tracking-[0.2em]">Scheduled Trip Date</label>
+                            <label class="text-[10px] uppercase font-black text-slate-700 mb-1.5 ml-1 block tracking-[0.2em]">Scheduled Trip Date</label>
                             <div class="relative">
-                                <i class="fa-solid fa-calendar-day absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-[10px]"></i>
-                                <input type="date" id="delivery_date" class="input-glass w-full h-[38px] pl-9 text-xs font-bold text-slate-700" value="<?php echo date('Y-m-d'); ?>">
+                                <i class="fa-solid fa-calendar-day absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-[10px]"></i>
+                                <input type="date" id="delivery_date" class="input-glass w-full h-[38px] pl-9 text-xs font-bold text-slate-800" value="<?php echo date('Y-m-d'); ?>">
                             </div>
                         </div>
                         <div class="col-span-2 relative">
-                            <label class="text-[9px] uppercase font-black text-slate-400 mb-1.5 ml-1 block tracking-[0.2em]">Personnel Assignment</label>
+                            <label class="text-[10px] uppercase font-black text-slate-700 mb-1.5 ml-1 block tracking-[0.2em]">Personnel Assignment</label>
                             <div class="flex items-start gap-4">
                                 <div class="relative w-[300px]">
-                                    <i class="fa-solid fa-user-plus absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-[10px]"></i>
-                                    <input type="text" id="emp_search" placeholder="Search staff..." class="input-glass w-full h-[38px] pl-9 text-xs" onkeyup="searchEmployees(this.value)">
+                                    <i class="fa-solid fa-user-plus absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-[10px]"></i>
+                                    <input type="text" id="emp_search" placeholder="Search staff members..." class="input-glass w-full h-[38px] pl-9 text-xs font-bold text-slate-800" onkeyup="searchEmployees(this.value)">
                                     <div id="emp_results" class="absolute w-full mt-1 bg-white/80 backdrop-blur-xl border border-white/40 rounded-xl shadow-2xl z-20 hidden overflow-hidden"></div>
                                 </div>
                                 <div id="assigned_staff" class="flex flex-wrap gap-2 flex-1"></div>
@@ -389,7 +446,7 @@ $deliveries = $stmt->fetchAll();
                     <!-- Expenses Panel -->
                     <div class="p-4 bg-white/40 rounded-[1.5rem] border border-white/60">
                         <div class="flex items-center justify-between mb-3">
-                            <h4 class="text-[10px] uppercase font-black text-slate-400 tracking-widest">Pre-paid Trip Expenses</h4>
+                            <h4 class="text-[11px] uppercase font-black text-slate-600 tracking-widest">Delivery Expenses</h4>
                             <div class="flex items-center gap-2">
                                 <button type="button" onclick="addQuickExpense('Fuel')" class="text-[9px] font-bold text-slate-500 bg-white border border-slate-200 px-3 py-1.5 rounded-xl hover:bg-indigo-50 hover:text-indigo-600 transition-all">Fuel</button>
                                 <button type="button" onclick="addQuickExpense('Accommodation')" class="text-[9px] font-bold text-slate-500 bg-white border border-slate-200 px-3 py-1.5 rounded-xl hover:bg-indigo-50 hover:text-indigo-600 transition-all">Accomm.</button>
@@ -403,7 +460,7 @@ $deliveries = $stmt->fetchAll();
                     <!-- Customers & Orders -->
                     <div class="space-y-4">
                         <div class="flex items-center justify-between">
-                            <h4 class="text-xs uppercase font-black text-slate-900 tracking-widest">Customer Delivery Queue</h4>
+                            <h4 class="text-[11px] uppercase font-black text-slate-600 tracking-widest">Customer Delivery Queue</h4>
                             <button type="button" onclick="addCustomerBlock()" class="bg-indigo-600 text-white px-5 py-2 rounded-xl font-bold text-[10px] uppercase tracking-widest shadow-lg shadow-indigo-600/20">Add Customer Order</button>
                         </div>
                         <div id="customer_blocks" class="space-y-4"></div>
@@ -412,18 +469,22 @@ $deliveries = $stmt->fetchAll();
             </div>
 
             <div class="p-6 border-t border-white/40 flex items-center justify-between bg-white/40">
-                <div class="flex space-x-8">
+                <div class="flex space-x-10">
                     <div>
-                        <p class="text-[9px] uppercase font-black text-slate-400 tracking-widest">Trip Expenses</p>
-                        <p id="total_expenses_display" class="text-lg font-black text-rose-600">LKR 0.00</p>
+                        <p class="text-[10px] uppercase font-black text-slate-600 tracking-widest mb-1">Trip Expenses</p>
+                        <p id="total_expenses_display" class="text-2xl font-black text-rose-600 tracking-tighter">LKR 0.00</p>
                     </div>
                     <div>
-                        <p class="text-[9px] uppercase font-black text-slate-400 tracking-widest">Estimated Revenue</p>
-                        <p id="total_sales_display" class="text-lg font-black text-emerald-600">LKR 0.00</p>
+                        <p class="text-[10px] uppercase font-black text-slate-600 tracking-widest mb-1">Estimated Revenue</p>
+                        <p id="total_sales_display" class="text-2xl font-black text-emerald-600 tracking-tighter">LKR 0.00</p>
+                    </div>
+                    <div class="border-l-2 border-slate-200 pl-10">
+                        <p class="text-[10px] uppercase font-black text-indigo-700 tracking-widest mb-1">Est. Trip Profit</p>
+                        <p id="total_profit_display" class="text-2xl font-black text-indigo-600 tracking-tighter">LKR 0.00</p>
                     </div>
                 </div>
                 <div class="flex space-x-3">
-                    <button onclick="closeModal()" class="px-6 py-3 font-bold text-slate-400 uppercase text-[10px] tracking-widest">Abort</button>
+                    <button onclick="closeModal()" class="px-6 py-3 font-bold text-rose-400 hover:text-rose-600 uppercase text-[10px] tracking-widest">Discard Changes</button>
                     <button onclick="processRouteSave()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest shadow-2xl shadow-indigo-600/30 transition-all active:scale-95 flex items-center gap-3">
                         <i class="fa-solid fa-paper-plane text-[10px]"></i>
                         <span>Authorize Trip</span>
@@ -509,8 +570,11 @@ $deliveries = $stmt->fetchAll();
         let tripEmployees = [];
         let tripExpenses = [];
         let tripCustomers = [];
+        let editingId = null;
 
         function openModal() {
+            editingId = null;
+            document.getElementById('modal-title').innerText = 'Authorize New Delivery';
             routeModal.classList.remove('hidden');
             tripEmployees = [];
             tripExpenses = [];
@@ -522,7 +586,89 @@ $deliveries = $stmt->fetchAll();
             addCustomerBlock();
         }
 
+        function openEditModal(id) {
+            editingId = id;
+            document.getElementById('modal-title').innerText = 'Edit Trip #' + String(id).padStart(4, '0');
+            
+            fetch(`?action=view_delivery&id=${id}`)
+                .then(r => r.json())
+                .then(res => {
+                    if (!res.success) return alert(res.message);
+                    const d = res.data;
+                    
+                    routeModal.classList.remove('hidden');
+                    document.getElementById('delivery_date').value = d.delivery_date;
+                    
+                    // Clear Previous
+                    tripEmployees = [];
+                    document.getElementById('assigned_staff').innerHTML = '';
+                    document.getElementById('expense_rows').innerHTML = '';
+                    document.getElementById('customer_blocks').innerHTML = '';
+                    
+                    // Populate Staff
+                    d.employees.forEach(e => addStaff(e.id || null, e.full_name, e.contact_number));
+                    
+                    // Populate Expenses
+                    if (d.expenses.length > 0) d.expenses.forEach(e => addQuickExpense(e.expense_name, e.amount));
+                    else addExpenseRow();
+                    
+                    // Populate Customers
+                    d.customers.forEach(c => {
+                        const blockId = addCustomerBlock();
+                        selectCustomer(blockId, c.customer_id, c.name, c.contact_number);
+                        
+                        const block = document.getElementById(`cust-${blockId}`);
+                        if (c.bill_image) {
+                            block.dataset.existingBill = c.bill_image;
+                            document.getElementById(`bill-label-${blockId}`).innerHTML = `
+                                <a href="../uploads/bills/${c.bill_image}" target="_blank" class="h-[42px] px-4 rounded-xl bg-indigo-50 text-indigo-700 hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center border border-indigo-100 shadow-sm group">
+                                    <i class="fa-solid fa-eye mr-2 group-hover:scale-110 transition-transform"></i>
+                                    <span class="text-[10px] font-black uppercase tracking-widest">View Bill</span>
+                                </a>`;
+                        }
+                        
+                        // Clear the auto-added empty row
+                        const orderItemsDiv = block.querySelector('.order-items');
+                        orderItemsDiv.innerHTML = ''; 
+                        
+                        c.items.forEach(item => {
+                            const itemId = addItemRow(blockId);
+                            const row = document.getElementById(`item-${itemId}`);
+                            row.querySelector('.item-id').value = item.container_item_id;
+                            row.querySelector('.item-search').value = item.brand_name;
+                            row.querySelector('.item-qty').value = item.qty;
+                            row.querySelector('.item-dmg').value = item.damaged_qty;
+                            row.querySelector('.item-price').value = item.selling_price;
+                            row.querySelector('.item-discount').value = item.discount_amount || 0; // Assuming discount_amount is available, default to 0
+                            row.querySelector('.cost-price').value = item.cost_price;
+                            
+                            const stockDiv = row.querySelector('.stock-info');
+                            if(stockDiv) {
+                                const bgs = stockDiv.querySelectorAll('span');
+                                if(bgs.length >= 2) { // Ensure both badges exist before updating
+                                    bgs[0].innerHTML = `<i class="fa-solid fa-box-archive mr-1"></i> Stock: ${item.available_qty} PKTS`;
+                                    bgs[1].innerHTML = `<i class="fa-solid fa-coins mr-1"></i> Unit Cost: LKR ${item.cost_price}`;
+                                    stockDiv.classList.remove('hidden');
+                                }
+                            }
+                        });
+                    });
+                    
+                    calculateTotals();
+                });
+        }
+
         function closeModal() {
+            if (!routeModal.classList.contains('hidden')) {
+                const hasItems = document.querySelectorAll('.order-items .grid').length > 0;
+                const hasExpenses = document.querySelectorAll('#expense_rows .grid').length > 0;
+                
+                if (hasItems || hasExpenses) {
+                    if (!confirm('You have unsaved changes in this trip. Are you sure you want to discard them?')) {
+                        return;
+                    }
+                }
+            }
             routeModal.classList.add('hidden');
             detailsModal.classList.add('hidden');
         }
@@ -619,15 +765,15 @@ $deliveries = $stmt->fetchAll();
             `).join('');
         }
 
-        function addQuickExpense(name) {
-            const id = Date.now();
+        function addQuickExpense(name, amount = '') {
+            const id = Date.now() + Math.random();
             const html = `
                 <div id="exp-${id}" class="grid grid-cols-12 gap-3 items-center animate-[fadeIn_0.3s_ease]">
                     <div class="col-span-8">
                         <input type="text" value="${name}" class="input-glass w-full h-[38px] exp-name text-xs font-bold">
                     </div>
                     <div class="col-span-3">
-                        <input type="number" placeholder="0.00" class="input-glass w-full h-[38px] exp-amt text-xs font-bold" onkeyup="calculateTotals()" autofocus>
+                        <input type="number" value="${amount}" placeholder="0.00" class="input-glass w-full h-[38px] exp-amt text-xs font-bold" onkeyup="calculateTotals()" autofocus>
                     </div>
                     <div class="col-span-1 text-center font-bold text-slate-300 hover:text-rose-500 cursor-pointer" onclick="document.getElementById('exp-${id}').remove(); calculateTotals();">
                         <i class="fa-solid fa-times text-xs"></i>
@@ -656,31 +802,57 @@ $deliveries = $stmt->fetchAll();
         }
 
         function addCustomerBlock() {
-            const id = Date.now();
+            const id = (Date.now() + Math.random()).toString().replace('.', '');
             const html = `
-                <div id="cust-${id}" class="glass-card p-3 border border-slate-200 relative animate-[fadeIn_0.4s_ease] mb-4">
+                <div id="cust-${id}" class="glass-card p-3 border border-slate-200 relative animate-[fadeIn_0.4s_ease] mb-4" data-customer-id="" data-existing-bill="">
                     <div class="flex items-center justify-between mb-3">
                         <div class="flex items-center gap-3 flex-1">
                             <div class="w-8 h-8 bg-indigo-50 border-2 border-indigo-500/30 rounded-xl flex items-center justify-center text-indigo-600"><i class="fa-solid fa-user-tag text-[10px]"></i></div>
-                            <input type="text" placeholder="Assign Client..." class="input-glass flex-1 h-[38px] text-xs font-bold cust-search" onkeyup="searchCustomers(this.value, ${id})">
+                            <input type="text" placeholder="Assign Client..." class="input-glass flex-1 h-[38px] text-xs font-bold cust-search" onkeyup="searchCustomers(this.value, '${id}')">
                         </div>
-                        <button type="button" onclick="document.getElementById('cust-${id}').remove(); calculateTotals();" class="ml-3 text-slate-300 hover:text-rose-600"><i class="fa-solid fa-trash-can text-xs"></i></button>
+                        <div class="flex items-center gap-2">
+                             <input type="file" class="hidden customer-bill-input" id="bill-input-${id}" onchange="handleBillSelect(this, '${id}')">
+                             
+                             <button type="button" onclick="document.getElementById('bill-input-${id}').click()" title="Attach Bill" class="h-[42px] px-4 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 text-white hover:from-black hover:to-slate-900 transition-all flex items-center shadow-lg shadow-emerald-500/20 group">
+                                <i class="fa-solid fa-file-invoice-dollar mr-2 group-hover:scale-110 transition-transform"></i>
+                                <span class="text-[10px] font-black uppercase tracking-widest">Upload Bill</span>
+                             </button>
+                             
+                             <div id="bill-label-${id}" class="text-[9px] font-black text-slate-400"></div>
+                             
+                             <button type="button" onclick="document.getElementById('cust-${id}').remove(); calculateTotals();" class="w-10 h-10 rounded-xl bg-slate-50 text-slate-300 hover:text-rose-600 hover:bg-rose-50 transition-all border border-slate-100 flex items-center justify-center"><i class="fa-solid fa-trash-can text-sm"></i></button>
+                        </div>
                     </div>
                     <div class="hidden customer-results absolute w-full left-0 top-[80px] z-30 bg-white/80 backdrop-blur-xl border border-white/40 rounded-2xl shadow-2xl p-2 max-w-md mx-6"></div>
                     
                     <div class="selected-customer-info mb-6 hidden bg-emerald-500/10 p-4 rounded-2xl border border-emerald-500/20 text-emerald-700 text-sm font-bold"></div>
                     
-                    <div class="space-y-3">
+                        <div class="space-y-3">
                         <div class="flex items-center justify-between mb-2">
-                            <span class="text-[9px] uppercase font-black text-slate-400 tracking-widest">Current Order Items</span>
-                            <button type="button" onclick="addItemRow(${id})" class="text-[9px] font-black text-emerald-600 uppercase tracking-widest">+ Add Item</button>
+                            <span class="text-[10px] uppercase font-black text-slate-600 tracking-widest">Current Order Items</span>
+                            <button type="button" onclick="addItemRow('${id}')" class="text-[10px] font-black text-emerald-600 uppercase tracking-widest">+ Add Item</button>
                         </div>
+                        
+                        <div class="grid grid-cols-12 gap-2 px-1 mb-1">
+                            <div class="col-span-4"><span class="text-[8px] uppercase font-black text-slate-400 tracking-wider">Product</span></div>
+                            <div class="col-span-1"><span class="text-[8px] uppercase font-black text-slate-400 tracking-wider">Qty</span></div>
+                            <div class="col-span-2"><span class="text-[8px] uppercase font-black text-slate-400 tracking-wider">Selling</span></div>
+                            <div class="col-span-2"><span class="text-[8px] uppercase font-black text-red-600 tracking-wider">Damaged</span></div>
+                            <div class="col-span-2"><span class="text-[8px] uppercase font-black text-slate-400 tracking-wider">Discount</span></div>
+                        </div>
+
                         <div class="order-items space-y-3"></div>
+                        
+                        <div class="pt-3 border-t border-slate-100 flex justify-between items-center">
+                            <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Order Subtotal</span>
+                            <span class="customer-subtotal text-sm font-black text-slate-900">LKR 0.00</span>
+                        </div>
                     </div>
                 </div>
             `;
             document.getElementById('customer_blocks').insertAdjacentHTML('beforeend', html);
             addItemRow(id);
+            return id;
         }
 
         function searchCustomers(term, blockId) {
@@ -695,8 +867,8 @@ $deliveries = $stmt->fetchAll();
                     if (data.length > 0) {
                         data.forEach(c => {
                             html += `<div class="p-3 hover:bg-slate-50 cursor-pointer border-b border-white/5 last:border-0" onclick="selectCustomer(${blockId}, ${c.id}, '${c.name}', '${c.contact_number}')">
-                                <p class="text-sm font-black text-slate-800">${c.name}</p>
-                                <p class="text-[10px] text-slate-400 uppercase font-bold tracking-widest">${c.contact_number}</p>
+                                <p class="text-sm font-black text-slate-800 uppercase tracking-tight">${c.name}</p>
+                                <p class="text-[10px] text-slate-500 uppercase font-black tracking-widest">${c.contact_number}</p>
                             </div>`;
                         });
                     } else {
@@ -752,21 +924,27 @@ $deliveries = $stmt->fetchAll();
         }
 
         function addItemRow(blockId) {
-            const id = Date.now();
+            const id = Date.now() + Math.random();
             const html = `
                 <div id="item-${id}" class="space-y-1">
                     <div class="grid grid-cols-12 gap-2 items-center">
-                        <div class="col-span-6 relative">
-                            <input type="text" placeholder="Select Product..." class="input-glass w-full h-[36px] text-xs font-bold item-search" onkeyup="searchBrands(this.value, ${id})">
+                        <div class="col-span-4 relative">
+                            <input type="text" placeholder="Product..." class="input-glass w-full h-[36px] text-xs font-bold item-search" onkeyup="searchBrands(this.value, '${id}')">
                             <div class="brand-results hidden absolute w-full mt-1 bg-white/80 backdrop-blur-xl border border-white/40 rounded-xl shadow-2xl z-40 p-1"></div>
                             <input type="hidden" class="item-id">
                             <input type="hidden" class="cost-price">
                         </div>
-                        <div class="col-span-2">
-                            <input type="number" placeholder="Qty" class="input-glass w-full h-[36px] text-xs font-bold item-qty" onkeyup="calculateTotals()">
+                        <div class="col-span-1">
+                            <input type="number" placeholder="0" class="input-glass w-full h-[36px] text-xs font-bold item-qty" onkeyup="calculateTotals()">
                         </div>
-                        <div class="col-span-3">
-                            <input type="number" placeholder="Price" class="input-glass w-full h-[36px] text-xs font-bold item-price" onkeyup="calculateTotals()">
+                        <div class="col-span-2">
+                            <input type="number" placeholder="0.00" class="input-glass w-full h-[36px] text-xs font-bold item-price" onkeyup="calculateTotals()">
+                        </div>
+                        <div class="col-span-2">
+                            <input type="number" placeholder="Dmg" class="input-glass w-full h-[36px] text-xs font-bold item-dmg border-red-100 text-red-600" onkeyup="calculateTotals()" title="Damaged Qty">
+                        </div>
+                        <div class="col-span-2">
+                            <input type="number" placeholder="0.00" class="input-glass w-full h-[36px] text-xs font-bold item-discount" onkeyup="calculateTotals()" title="Discount">
                         </div>
                         <div class="col-span-1 text-center text-slate-300 hover:text-rose-500 cursor-pointer" onclick="document.getElementById('item-${id}').remove(); calculateTotals();">
                             <i class="fa-solid fa-minus-circle text-[10px]"></i>
@@ -779,19 +957,24 @@ $deliveries = $stmt->fetchAll();
                 </div>
             `;
             document.getElementById(`cust-${blockId}`).querySelector('.order-items').insertAdjacentHTML('beforeend', html);
+            return id;
         }
 
         function selectBrand(itemId, id, name, qty, cost) {
             const row = document.getElementById(`item-${itemId}`);
             row.querySelector('.item-id').value = id;
-            row.querySelector('.item-search').value = name;
+            row.querySelector('.item-search').value = `${name} (Avail: ${qty} / Cost: LKR ${cost})`;
             row.querySelector('.cost-price').value = cost;
             
             const stockDiv = row.querySelector('.stock-info');
-            const badges = stockDiv.querySelectorAll('span');
-            badges[0].innerHTML = `<i class="fa-solid fa-box-archive mr-1"></i> Stock: ${qty} PKTS`;
-            badges[1].innerHTML = `<i class="fa-solid fa-coins mr-1"></i> Unit Cost: LKR ${cost}`;
-            stockDiv.classList.remove('hidden');
+            if(stockDiv) {
+                const badges = stockDiv.querySelectorAll('span');
+                if(badges.length >= 2) {
+                    badges[0].innerHTML = `<i class="fa-solid fa-box-archive mr-1"></i> Stock: ${qty} PKTS`;
+                    badges[1].innerHTML = `<i class="fa-solid fa-coins mr-1"></i> Unit Cost: LKR ${cost}`;
+                    stockDiv.classList.remove('hidden');
+                }
+            }
             
             row.querySelector('.brand-results').classList.add('hidden');
             calculateTotals();
@@ -807,7 +990,7 @@ $deliveries = $stmt->fetchAll();
                 .then(data => {
                     let html = '';
                     data.forEach(b => {
-                        html += `<div class="p-2 hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-0" onclick="selectBrand(${itemId}, ${b.item_id}, '${b.brand_name}', ${b.available_qty}, ${b.per_item_cost})">
+                        html += `<div class="p-2 hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-0" onclick="selectBrand('${itemId}', ${b.item_id}, '${b.brand_name}', ${b.available_qty}, ${b.per_item_cost})">
                             <div class="flex justify-between items-center mb-1">
                                 <span class="text-xs font-black text-slate-800">${b.brand_name}</span>
                                 <span class="text-[9px] bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded font-black">${b.available_qty} PKTS</span>
@@ -824,25 +1007,21 @@ $deliveries = $stmt->fetchAll();
                 });
         }
 
-        function selectBrand(itemId, id, name, qty, cost) {
-            const row = document.getElementById(`item-${itemId}`);
-            row.querySelector('.item-id').value = id;
-            row.querySelector('.item-search').value = `${name} (Avail: ${qty} / Cost: LKR ${cost})`;
-            row.querySelector('.cost-price').value = cost;
-            
-            // Show stock badges if they exist or update them
-            const stockDiv = row.querySelector('.stock-info');
-            if(stockDiv) {
-                const badges = stockDiv.querySelectorAll('span');
-                if(badges.length >= 2) {
-                    badges[0].innerHTML = `<i class="fa-solid fa-box-archive mr-1"></i> Stock: ${qty} PKTS`;
-                    badges[1].innerHTML = `<i class="fa-solid fa-coins mr-1"></i> Unit Cost: LKR ${cost}`;
-                    stockDiv.classList.remove('hidden');
-                }
+        function handleBillSelect(input, id) {
+            const lbl = document.getElementById(`bill-label-${id}`);
+            if (input.files && input.files[0]) {
+                const url = URL.createObjectURL(input.files[0]);
+                lbl.innerHTML = `
+                    <div class="flex items-center gap-2">
+                        <span class="bg-emerald-100 text-emerald-700 px-3 py-1.5 rounded-xl border border-emerald-200 flex items-center gap-2 animate-[scaleIn_0.2s_ease]">
+                            <i class="fa-solid fa-circle-check"></i> Attached
+                        </span>
+                        <a href="${url}" target="_blank" class="h-[42px] px-4 rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all flex items-center justify-center border border-slate-200 shadow-sm group">
+                            <i class="fa-solid fa-eye mr-2 group-hover:scale-110 transition-transform"></i>
+                            <span class="text-[10px] font-black uppercase tracking-widest">Preview</span>
+                        </a>
+                    </div>`;
             }
-            
-            row.querySelector('.brand-results').classList.add('hidden');
-            calculateTotals();
         }
 
         function calculateTotals() {
@@ -851,19 +1030,41 @@ $deliveries = $stmt->fetchAll();
             document.getElementById('total_expenses_display').innerText = `LKR ${totalExp.toLocaleString()}`;
 
             let totalRev = 0;
-            document.querySelectorAll('.order-items').forEach(cont => {
-                cont.querySelectorAll('.grid').forEach(row => {
+            let totalCost = 0;
+            
+            document.querySelectorAll('#customer_blocks .glass-card').forEach(block => {
+                let customerSubtotal = 0;
+                block.querySelectorAll('.order-items .grid').forEach(row => {
                     const q = parseFloat(row.querySelector('.item-qty').value) || 0;
                     const p = parseFloat(row.querySelector('.item-price').value) || 0;
-                    totalRev += (q * p);
+                    const cp = parseFloat(row.querySelector('.cost-price').value) || 0;
+                    const dmg = parseFloat(row.querySelector('.item-dmg').value) || 0;
+                    const disc = parseFloat(row.querySelector('.item-discount').value) || 0;
+                    
+                    const lineTotal = ((q - dmg) * p) - disc;
+                    customerSubtotal += lineTotal;
+                    totalRev += lineTotal;
+                    totalCost += (q * cp);
                 });
+                const subtotalEl = block.querySelector('.customer-subtotal');
+                if(subtotalEl) subtotalEl.innerText = `LKR ${customerSubtotal.toLocaleString()}`;
             });
+            
+            const estProfit = totalRev - totalCost - totalExp;
             document.getElementById('total_sales_display').innerText = `LKR ${totalRev.toLocaleString()}`;
+            document.getElementById('total_profit_display').innerText = `LKR ${estProfit.toLocaleString()}`;
+            
+            // Color coding for profit
+            const profitEl = document.getElementById('total_profit_display');
+            if(estProfit < 0) profitEl.classList.replace('text-indigo-600', 'text-rose-600');
+            else profitEl.classList.replace('text-rose-600', 'text-indigo-600');
         }
 
         function processRouteSave() {
             const btn = event.currentTarget;
             const originalHtml = btn.innerHTML;
+            
+            const formData = new FormData();
             
             // Collect Data
             const date = document.getElementById('delivery_date').value;
@@ -877,7 +1078,7 @@ $deliveries = $stmt->fetchAll();
             });
 
             const custs = [];
-            document.querySelectorAll('#customer_blocks .glass-card').forEach(b => {
+            document.querySelectorAll('#customer_blocks .glass-card').forEach((b, index) => {
                 const cid = b.dataset.customerId;
                 const items = [];
                 b.querySelectorAll('.order-items .grid').forEach(r => {
@@ -885,9 +1086,20 @@ $deliveries = $stmt->fetchAll();
                     const q = r.querySelector('.item-qty').value;
                     const p = r.querySelector('.item-price').value;
                     const cp = r.querySelector('.cost-price').value;
-                    if(iid && q && p) items.push({item_id: iid, qty: q, selling_price: p, cost_price: cp});
+                    const dmg = r.querySelector('.item-dmg').value;
+                    const disc = r.querySelector('.item-discount').value;
+                    if(iid && q && p) items.push({item_id: iid, qty: q, selling_price: p, cost_price: cp, damaged_qty: dmg, discount: disc});
                 });
-                if(cid && items.length) custs.push({customer_id: cid, items});
+                
+                const billInput = b.querySelector('.customer-bill-input');
+                const existingBill = b.dataset.existingBill;
+                
+                if(cid && items.length) {
+                    custs.push({customer_id: cid, items, existing_bill: existingBill});
+                    if(billInput && billInput.files[0]) {
+                        formData.append(`bill_${index}`, billInput.files[0]);
+                    }
+                }
             });
 
             if(!emps.length || !custs.length) return alert('Assign at least one staff and one customer order.');
@@ -895,9 +1107,9 @@ $deliveries = $stmt->fetchAll();
             btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Processing...';
             btn.disabled = true;
 
-            const formData = new FormData();
             formData.append('action', 'save_delivery');
             formData.append('delivery_date', date);
+            if (editingId) formData.append('editing_id', editingId);
             formData.append('employees', JSON.stringify(emps));
             formData.append('expenses', JSON.stringify(exps));
             formData.append('customers', JSON.stringify(custs));
