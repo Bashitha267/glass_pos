@@ -183,13 +183,13 @@ if (isset($_GET['logout'])) {
                 <h3 class="text-premium-label text-slate-800 group-hover:text-purple-600 transition-colors">Staff Management</h3>
             </a>
 
-            <!-- Container History -->
-            <div class="glass-card group p-8 flex flex-col items-center justify-center text-center cursor-pointer">
+            <!-- Payment Management -->
+            <a href="managePayments.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
                 <div class="action-icon w-16 h-16 bg-indigo-50 border-2 border-indigo-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
                     <i class="fa-solid fa-clock-rotate-left text-3xl text-indigo-600"></i>
                 </div>
-                <h3 class="text-premium-label text-slate-800 group-hover:text-indigo-600 transition-colors">Payment Managment</h3>
-            </div>
+                <h3 class="text-premium-label text-slate-800 group-hover:text-indigo-600 transition-colors">Payment Management</h3>
+            </a>
 
             <!-- Container Ledger -->
             <a href="ledger.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
@@ -210,12 +210,12 @@ if (isset($_GET['logout'])) {
            
 
             <!-- Reports Hub -->
-            <div class="glass-card group p-8 flex flex-col items-center justify-center text-center cursor-pointer">
+            <a href="reports.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
                 <div class="action-icon w-16 h-16 bg-rose-50 border-2 border-rose-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
                     <i class="fa-solid fa-chart-line text-3xl text-rose-600"></i>
                 </div>
-                <h3 class="text-premium-label text-slate-800 group-hover:text-rose-600 transition-colors">Reports</h3>
-            </div>
+                <h3 class="text-premium-label text-slate-800 group-hover:text-rose-600 transition-colors">Business Reports</h3>
+            </a>
         </div>
     </main>
 

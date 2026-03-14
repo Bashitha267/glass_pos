@@ -468,15 +468,12 @@ $containers = $stmt->fetchAll();
                             <td class="px-3 py-4 text-sm font-bold text-emerald-600 whitespace-nowrap">Rs. <?php echo number_format($c['total_paid'], 2); ?></td>
                             <td class="px-3 py-4 text-sm font-bold text-rose-600 whitespace-nowrap">Rs. <?php echo number_format($c['total_expenses'] - $c['total_paid'], 2); ?></td>
                             <td class="px-3 py-4 text-center">
-                                <div class="flex items-center justify-center space-x-2">
-                                    <button onclick="viewContainer('<?php echo $c['container_number']; ?>')" class="text-slate-400 hover:text-cyan-600 transition-colors p-2 rounded-lg hover:bg-cyan-600/10" title="View">
-                                        <i class="fa-solid fa-eye text-sm"></i>
+                                <div class="flex items-center justify-center gap-2">
+                                    <button onclick="editContainer('<?php echo $c['container_number']; ?>')" class="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-lg shadow-emerald-600/10">
+                                        Update
                                     </button>
-                                    <button onclick="editContainer('<?php echo $c['container_number']; ?>')" class="text-slate-400 hover:text-emerald-600 transition-colors p-2 rounded-lg hover:bg-emerald-600/10" title="Edit">
-                                        <i class="fa-solid fa-pen-to-square text-sm"></i>
-                                    </button>
-                                    <button onclick="deleteContainer(<?php echo $c['id']; ?>, '<?php echo $c['container_number']; ?>')" class="text-slate-400 hover:text-rose-600 transition-colors p-2 rounded-lg hover:bg-rose-600/10" title="Delete">
-                                        <i class="fa-solid fa-trash-can text-sm"></i>
+                                    <button onclick="deleteContainer(<?php echo $c['id']; ?>, '<?php echo $c['container_number']; ?>')" class="bg-rose-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-lg shadow-rose-600/10">
+                                        Delete
                                     </button>
                                 </div>
                             </td>
