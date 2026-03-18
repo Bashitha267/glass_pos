@@ -293,7 +293,7 @@ foreach ($staff_raw as $staff) {
 	<header class="glass-header sticky top-0 z-40 py-4 mb-8 leading-none shadow-sm">
 		<div class="max-w-[1600px] mx-auto px-6 flex items-center justify-between">
 			<div class="flex items-center space-x-5">
-				<a href="reports.php" class="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-100 text-slate-800 hover:bg-slate-900 hover:text-white transition-all shadow-sm">
+				<a href="dashboard.php" class="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-100 text-slate-800 hover:bg-slate-900 hover:text-white transition-all shadow-sm">
 					<i class="fa-solid fa-arrow-left"></i>
 				</a>
 				<div>
