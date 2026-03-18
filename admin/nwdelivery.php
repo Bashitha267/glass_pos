@@ -29,18 +29,36 @@ if ($action == 'search_customer') {
 }
 
 if ($action == 'search_brand_stock') {
-    $term = '%' . $_GET['term'] . '%';
-    $stmt = $pdo->prepare("
-        SELECT b.id as brand_id, b.name as brand_name, 
-               ci.id as item_id, ci.total_qty, ci.sold_qty, (ci.total_qty - ci.sold_qty) as available_qty,
-               c.container_number, c.country, c.arrival_date, c.per_item_cost
-        FROM container_items ci
-        JOIN brands b ON ci.brand_id = b.id
-        JOIN containers c ON ci.container_id = c.id
-        WHERE b.name LIKE ? AND (ci.total_qty - ci.sold_qty) > 0
-        LIMIT 10
-    ");
-    $stmt->execute([$term]);
+    $term = $_GET['term'] ?? '';
+    if (empty($term)) {
+        // Show top 3 by quantity if no term provided
+        $stmt = $pdo->prepare("
+            SELECT b.id as brand_id, b.name as brand_name, 
+                   ci.id as item_id, ci.total_qty, ci.sold_qty, (ci.total_qty - ci.sold_qty) as available_qty,
+                   c.container_number, c.country, c.arrival_date, c.per_item_cost
+            FROM container_items ci
+            JOIN brands b ON ci.brand_id = b.id
+            JOIN containers c ON ci.container_id = c.id
+            WHERE (ci.total_qty - ci.sold_qty) > 0
+            ORDER BY available_qty DESC
+            LIMIT 3
+        ");
+        $stmt->execute();
+    } else {
+        $termParam = '%' . $term . '%';
+        $stmt = $pdo->prepare("
+            SELECT b.id as brand_id, b.name as brand_name, 
+                   ci.id as item_id, ci.total_qty, ci.sold_qty, (ci.total_qty - ci.sold_qty) as available_qty,
+                   c.container_number, c.country, c.arrival_date, c.per_item_cost
+            FROM container_items ci
+            JOIN brands b ON ci.brand_id = b.id
+            JOIN containers c ON ci.container_id = c.id
+            WHERE b.name LIKE ? AND (ci.total_qty - ci.sold_qty) > 0
+            ORDER BY available_qty DESC
+            LIMIT 10
+        ");
+        $stmt->execute([$termParam]);
+    }
     echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
     exit;
 }
@@ -485,12 +503,22 @@ $deliveries = $stmt->fetchAll();
         .custom-scroll::-webkit-scrollbar { width: 6px; }
         .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
 
-        .glass-card:focus-within { z-index: 10; position: relative; }
+        #customer_blocks .glass-card:focus-within { z-index: 100 !important; position: relative; }
         
+        #customer_blocks .order-items .grid:focus-within { z-index: 110 !important; position: relative; }
+        
+        .brand-results, .customer-results, #emp_results, #bank_results, #chq_cust_results {
+            background-color: white !important;
+            opacity: 1 !important;
+        }
+
         .brand-results div, .customer-results div, #emp_results div, #bank_results div, #chq_cust_results div {
-            padding: 10px 14px;
+            padding: 12px 16px;
             transition: all 0.2s;
             border-bottom: 1px solid #f1f5f9;
+            cursor: pointer;
+            position: relative;
+            z-index: 120 !important;
         }
         
         .brand-results div:hover, .customer-results div:hover, #emp_results div:hover, #bank_results div:hover, #chq_cust_results div:hover {
@@ -1068,7 +1096,7 @@ $deliveries = $stmt->fetchAll();
                     let html = '';
                     if (data.length > 0) {
                         data.forEach(e => {
-                            html += `<div class="p-3 hover:bg-indigo-50/50 cursor-pointer text-sm font-bold text-slate-700 flex items-center border-b border-white/5 transition-colors" onclick="addStaff(${e.id}, '${e.full_name}', '${e.contact_number}')">
+                            html += `<div class="p-3 hover:bg-indigo-50/50 cursor-pointer text-sm font-bold text-slate-700 flex items-center border-b border-white/5 transition-colors" onmousedown="addStaff(${e.id}, '${e.full_name}', '${e.contact_number}')">
                                 <div class="w-7 h-7 bg-indigo-50 rounded-lg flex items-center justify-center mr-3 text-indigo-400 text-[10px] border border-indigo-100">
                                     <i class="fa-solid fa-user"></i>
                                 </div>
@@ -1273,7 +1301,7 @@ $deliveries = $stmt->fetchAll();
                     let html = '';
                     if (data.length > 0) {
                         data.forEach(c => {
-                            html += `<div class="p-3 hover:bg-slate-50 cursor-pointer border-b border-white/5 last:border-0" onclick="selectCustomer(${blockId}, ${c.id}, '${c.name}', '${c.contact_number}')">
+                            html += `<div class="p-3 hover:bg-slate-50 cursor-pointer border-b border-white/5 last:border-0" onmousedown="selectCustomer(${blockId}, ${c.id}, '${c.name}', '${c.contact_number}')">
                                 <p class="text-sm font-black text-slate-800 uppercase tracking-tight">${c.name}</p>
                                 <p class="text-[10px] text-slate-500 uppercase font-black tracking-widest">${c.contact_number}</p>
                             </div>`;
@@ -1336,7 +1364,7 @@ $deliveries = $stmt->fetchAll();
                 <div id="item-${id}" class="space-y-1">
                     <div class="grid grid-cols-12 gap-2 items-center">
                         <div class="col-span-4 relative">
-                            <input type="text" placeholder="Product..." class="input-glass w-full h-[36px] text-xs font-bold item-search" onkeyup="searchBrands(this.value, '${id}')">
+                            <input type="text" placeholder="Product..." class="input-glass w-full h-[36px] text-xs font-bold item-search" onkeyup="searchBrands(this.value, '${id}')" onfocus="searchBrands(this.value, '${id}')">
                             <div class="brand-results hidden absolute w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-[100] p-1"></div>
                             <input type="hidden" class="item-id">
                             <input type="hidden" class="cost-price">
@@ -1390,14 +1418,16 @@ $deliveries = $stmt->fetchAll();
         function searchBrands(term, itemId) {
             const row = document.getElementById(`item-${itemId}`);
             const resultsDiv = row.querySelector('.brand-results');
-            if(term.length < 2) return resultsDiv.classList.add('hidden');
-
-            fetch(`?action=search_brand_stock&term=${term}`)
+            
+            fetch(`?action=search_brand_stock&term=${encodeURIComponent(term)}`)
                 .then(r => r.json())
                 .then(data => {
                     let html = '';
+                    if(!term && data.length > 0) {
+                        html += '<p class="px-2 py-1.5 text-[8px] font-black text-slate-400 uppercase tracking-widest bg-slate-50 mb-1 rounded">Stock Recommendations</p>';
+                    }
                     data.forEach(b => {
-                        html += `<div class="p-2 hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-0" onclick="selectBrand('${itemId}', ${b.item_id}, '${b.brand_name}', ${b.available_qty}, ${b.per_item_cost})">
+                        html += `<div class="p-2 hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-0" onmousedown="selectBrand('${itemId}', ${b.item_id}, '${b.brand_name}', ${b.available_qty}, ${b.per_item_cost})">
                             <div class="flex justify-between items-center mb-1">
                                 <span class="text-xs font-black text-slate-800">${b.brand_name}</span>
                                 <span class="text-[9px] bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded font-black">${b.available_qty} PKTS</span>
@@ -1755,7 +1785,7 @@ $deliveries = $stmt->fetchAll();
                     let html = '';
                     if(data.length) {
                         data.forEach(b => {
-                            html += `<div class="p-3 hover:bg-indigo-50 cursor-pointer border-b border-slate-50 last:border-0" onclick="selectBank(${b.id}, '${b.name}', '${b.account_number}')">
+                            html += `<div class="p-3 hover:bg-indigo-50 cursor-pointer border-b border-slate-50 last:border-0" onmousedown="selectBank(${b.id}, '${b.name}', '${b.account_number}')">
                                 <p class="text-xs font-black text-slate-800">${b.name}</p>
                                 <p class="text-[9px] text-slate-400 font-bold uppercase">${b.account_number} &bull; ${b.account_name}</p>
                             </div>`;
@@ -1815,7 +1845,7 @@ $deliveries = $stmt->fetchAll();
                 .then(data => {
                     let html = '';
                     data.forEach(c => {
-                        html += `<div class="p-3 hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-0" onclick="selectChqCust(${c.id}, '${c.name.replace(/'/g, "\\'")}')">
+                        html += `<div class="p-3 hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-0" onmousedown="selectChqCust(${c.id}, '${c.name.replace(/'/g, "\\'")}')">
                             <p class="text-xs font-black text-slate-800 uppercase">${c.name}</p>
                         </div>`;
                     });
