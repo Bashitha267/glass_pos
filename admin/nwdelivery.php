@@ -181,35 +181,44 @@ if ($action == 'save_delivery') {
 }
 
 if ($action == 'view_delivery') {
-    $id = (int)$_GET['id'];
-    $del = $pdo->prepare("SELECT d.*, u.full_name as created_by_name FROM deliveries d JOIN users u ON d.created_by = u.id WHERE d.id = ?");
-    $del->execute([$id]);
-    $delivery = $del->fetch(PDO::FETCH_ASSOC);
-    if (!$delivery) { echo json_encode(['success' => false, 'message' => 'Not found']); exit; }
-    $emps = $pdo->prepare("SELECT u.id, u.full_name, u.contact_number FROM delivery_employees de JOIN users u ON de.user_id = u.id WHERE de.delivery_id = ?");
-    $emps->execute([$id]);
-    $delivery['employees'] = $emps->fetchAll(PDO::FETCH_ASSOC);
-    $exps = $pdo->prepare("SELECT expense_name, amount FROM delivery_expenses WHERE delivery_id = ? ORDER BY id");
-    $exps->execute([$id]);
-    $delivery['expenses'] = $exps->fetchAll(PDO::FETCH_ASSOC);
-    $custs = $pdo->prepare("SELECT dc.id, dc.customer_id, dc.subtotal, dc.discount, dc.status, dc.payment_status, c.name, c.contact_number, c.address FROM delivery_customers dc JOIN customers c ON dc.customer_id = c.id WHERE dc.delivery_id = ? ORDER BY dc.id");
-    $custs->execute([$id]);
-    $custRows = $custs->fetchAll(PDO::FETCH_ASSOC);
-    foreach ($custRows as &$cr) {
-        $items = $pdo->prepare("SELECT di.*, b.name as brand_name, c.container_number, ci.available_qty FROM delivery_items di JOIN container_items ci ON di.container_item_id = ci.id JOIN brands b ON ci.brand_id = b.id JOIN containers c ON ci.container_id = c.id WHERE di.delivery_customer_id = ?");
-        $items->execute([$cr['id']]);
-        $cr['items'] = $items->fetchAll(PDO::FETCH_ASSOC);
-        
-        $payments = $pdo->prepare("SELECT dp.*, b.name as bank_name, b.account_number as bank_acc, cust.name as cheque_payer FROM delivery_payments dp LEFT JOIN banks b ON dp.bank_id = b.id LEFT JOIN customers cust ON dp.cheque_customer_id = cust.id WHERE dp.delivery_customer_id = ? ORDER BY dp.payment_date DESC");
-        $payments->execute([$cr['id']]);
-        $cr['payments'] = $payments->fetchAll(PDO::FETCH_ASSOC);
-        $cr['total_paid'] = array_sum(array_column($cr['payments'], 'amount'));
-        
-        $cr['bill_image'] = !empty($cr['items']) ? $cr['items'][0]['bill_image'] : null;
+    try {
+        $id = (int)($_GET['id'] ?? 0);
+        $del = $pdo->prepare("SELECT d.*, u.full_name as created_by_name FROM deliveries d JOIN users u ON d.created_by = u.id WHERE d.id = ?");
+        $del->execute([$id]);
+        $delivery = $del->fetch(PDO::FETCH_ASSOC);
+        if (!$delivery) { echo json_encode(['success' => false, 'message' => 'Not found']); exit; }
+
+        $emps = $pdo->prepare("SELECT u.id, u.full_name, u.contact_number FROM delivery_employees de JOIN users u ON de.user_id = u.id WHERE de.delivery_id = ?");
+        $emps->execute([$id]);
+        $delivery['employees'] = $emps->fetchAll(PDO::FETCH_ASSOC);
+
+        $exps = $pdo->prepare("SELECT expense_name, amount FROM delivery_expenses WHERE delivery_id = ? ORDER BY id");
+        $exps->execute([$id]);
+        $delivery['expenses'] = $exps->fetchAll(PDO::FETCH_ASSOC);
+
+        $custs = $pdo->prepare("SELECT dc.id, dc.customer_id, dc.subtotal, dc.discount, dc.status, dc.payment_status, c.name, c.contact_number, c.address FROM delivery_customers dc JOIN customers c ON dc.customer_id = c.id WHERE dc.delivery_id = ? ORDER BY dc.id");
+        $custs->execute([$id]);
+        $custRows = $custs->fetchAll(PDO::FETCH_ASSOC);
+
+        foreach ($custRows as &$cr) {
+            $items = $pdo->prepare("SELECT di.*, b.name as brand_name, c.container_number, (ci.total_qty - ci.sold_qty) as available_qty FROM delivery_items di JOIN container_items ci ON di.container_item_id = ci.id JOIN brands b ON ci.brand_id = b.id JOIN containers c ON ci.container_id = c.id WHERE di.delivery_customer_id = ?");
+            $items->execute([$cr['id']]);
+            $cr['items'] = $items->fetchAll(PDO::FETCH_ASSOC);
+
+            $payments = $pdo->prepare("SELECT dp.*, b.name as bank_name, b.account_number as bank_acc, cust.name as cheque_payer FROM delivery_payments dp LEFT JOIN banks b ON dp.bank_id = b.id LEFT JOIN customers cust ON dp.cheque_customer_id = cust.id WHERE dp.delivery_customer_id = ? ORDER BY dp.payment_date DESC");
+            $payments->execute([$cr['id']]);
+            $cr['payments'] = $payments->fetchAll(PDO::FETCH_ASSOC);
+            $cr['total_paid'] = array_sum(array_column($cr['payments'], 'amount'));
+
+            $cr['bill_image'] = !empty($cr['items']) ? $cr['items'][0]['bill_image'] : null;
+        }
+        unset($cr);
+
+        $delivery['customers'] = $custRows;
+        echo json_encode(['success' => true, 'data' => $delivery]);
+    } catch (Exception $e) {
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
     }
-    unset($cr);
-    $delivery['customers'] = $custRows;
-    echo json_encode(['success' => true, 'data' => $delivery]);
     exit;
 }
 
@@ -684,25 +693,41 @@ $deliveries = $stmt->fetchAll();
                     <h3 class="text-xl font-black font-['Outfit'] text-slate-900">Finalize Payment</h3>
                     <p id="add-payment-cust-name" class="text-[10px] uppercase font-black text-slate-400 tracking-widest"></p>
                 </div>
-                <button onclick="closeModal('add-payment-modal')" class="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-800 transition-all"><i class="fa-solid fa-times"></i></button>
+                <button type="button" onclick="closeModal('add-payment-modal')" class="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-800 transition-all"><i class="fa-solid fa-times"></i></button>
             </div>
             
             <form id="payment-form" onsubmit="savePayment(event)" class="space-y-5">
                 <input type="hidden" name="dc_id" id="payment_dc_id">
+                <input type="hidden" name="type" id="payment_type_val" value="Cash">
+                
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                    <div class="pay-method-card bg-indigo-50 border-2 border-indigo-500 rounded-xl p-3 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all hover:bg-indigo-100" onclick="selectPaymentMethod('Cash')" data-type="Cash">
+                        <i class="fa-solid fa-money-bill-wave text-indigo-600 text-xl"></i>
+                        <span class="text-[10px] font-black uppercase text-indigo-700 tracking-wider">Cash</span>
+                    </div>
+                    <div class="pay-method-card border-2 border-slate-100 rounded-xl p-3 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all hover:border-slate-300 hover:bg-slate-50" onclick="selectPaymentMethod('Cheque')" data-type="Cheque">
+                        <i class="fa-solid fa-money-check-dollar text-slate-500 text-xl"></i>
+                        <span class="text-[10px] font-black uppercase text-slate-600 tracking-wider">Cheque</span>
+                    </div>
+                    <div class="pay-method-card border-2 border-slate-100 rounded-xl p-3 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all hover:border-slate-300 hover:bg-slate-50" onclick="selectPaymentMethod('Account Transfer')" data-type="Account Transfer">
+                        <i class="fa-solid fa-building-columns text-slate-500 text-xl"></i>
+                        <span class="text-[10px] font-black uppercase text-slate-600 tracking-wider">Bank</span>
+                    </div>
+                    <div class="pay-method-card border-2 border-slate-100 rounded-xl p-3 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all hover:border-slate-300 hover:bg-slate-50" onclick="selectPaymentMethod('Card')" data-type="Card">
+                        <i class="fa-solid fa-credit-card text-slate-500 text-xl"></i>
+                        <span class="text-[10px] font-black uppercase text-slate-600 tracking-wider">Card</span>
+                    </div>
+                </div>
+
+                <div class="bg-rose-50 rounded-xl p-4 mb-4 border border-rose-100 flex justify-between items-center">
+                    <span class="text-[10px] font-black uppercase text-rose-500 tracking-widest">Left to Pay</span>
+                    <span id="pending_amount_display" class="font-black text-rose-600 text-lg">LKR 0.00</span>
+                </div>
                 
                 <div class="grid grid-cols-2 gap-4">
-                    <div class="col-span-2">
-                        <label class="text-[10px] uppercase font-black text-slate-500 tracking-widest ml-1 mb-1.5 block">Payment Mode</label>
-                        <select name="type" id="payment_type" class="input-glass w-full h-[48px] font-bold" onchange="togglePaymentFields()">
-                            <option value="Cash">Cash</option>
-                            <option value="Account Transfer">Account Transfer</option>
-                            <option value="Cheque">Cheque</option>
-                            <option value="Card">Card</option>
-                        </select>
-                    </div>
                     <div>
                         <label class="text-[10px] uppercase font-black text-slate-500 tracking-widest ml-1 mb-1.5 block">Amount (LKR)</label>
-                        <input type="number" name="amount" id="payment_amount" step="0.01" required class="input-glass w-full h-[48px] font-black text-emerald-600">
+                        <input type="number" name="amount" id="payment_amount" step="0.01" required class="input-glass w-full h-[48px] font-black text-emerald-600 text-lg">
                     </div>
                     <div>
                         <label class="text-[10px] uppercase font-black text-slate-500 tracking-widest ml-1 mb-1.5 block">Payment Date</label>
@@ -888,7 +913,7 @@ $deliveries = $stmt->fetchAll();
                     const d = res.data;
                     
                     routeModal.classList.remove('hidden');
-                    document.getElementById('delivery_date').value = d.delivery_date;
+                    document.getElementById('delivery_date').value = d.delivery_date || '';
                     
                     // Clear Previous
                     tripEmployees = [];
@@ -897,67 +922,81 @@ $deliveries = $stmt->fetchAll();
                     document.getElementById('customer_blocks').innerHTML = '';
                     
                     // Populate Staff
-                    d.employees.forEach(e => addStaff(e.id || null, e.full_name, e.contact_number));
+                    if (d.employees) {
+                        d.employees.forEach(e => addStaff(e.id || null, e.full_name, e.contact_number));
+                    }
                     
                     // Populate Expenses
-                    if (d.expenses.length > 0) d.expenses.forEach(e => addQuickExpense(e.expense_name, e.amount));
-                    else addExpenseRow();
+                    if (d.expenses && d.expenses.length > 0) {
+                        d.expenses.forEach(e => addQuickExpense(e.expense_name, e.amount));
+                    } else {
+                        addExpenseRow();
+                    }
                     
                     // Populate Customers
-                    d.customers.forEach(c => {
-                        const blockId = addCustomerBlock(c.id);
-                        selectCustomer(blockId, c.customer_id, c.name, c.contact_number);
-                        
-                        const block = document.getElementById(`cust-${blockId}`);
-                        if (c.bill_image) {
-                            block.dataset.existingBill = c.bill_image;
-                            document.getElementById(`bill-label-${blockId}`).innerHTML = `
-                                <div class="flex items-center gap-2 animate-[scaleIn_0.2s_ease]">
-                                    <button type="button" onclick="document.getElementById('bill-input-${blockId}').click()" class="h-[36px] px-4 rounded-xl bg-indigo-600 text-white hover:bg-black transition-all flex items-center shadow-lg shadow-indigo-600/20 group">
-                                        <i class="fa-solid fa-image mr-2 text-xs"></i>
-                                        <span class="text-[9px] font-black uppercase tracking-widest">${c.bill_image.length > 15 ? c.bill_image.substring(0, 12) + '...' : c.bill_image}</span>
-                                    </button>
-                                    <div class="flex gap-1">
-                                        <a href="../uploads/bills/${c.bill_image}" target="_blank" class="w-[36px] h-[36px] rounded-xl bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center border border-indigo-100 shadow-sm group" title="View Full Bill Image">
-                                            <i class="fa-solid fa-expand group-hover:scale-110 transition-transform text-xs"></i>
-                                        </a>
-                                        <button type="button" onclick="removeStoredBill('${blockId}')" class="w-[36px] h-[36px] rounded-xl bg-rose-50 text-rose-500 hover:bg-rose-600 hover:text-white transition-all flex items-center justify-center border border-rose-100 shadow-sm group" title="Remove Stored Bill">
-                                            <i class="fa-solid fa-xmark group-hover:scale-110 transition-transform text-sm"></i>
-                                        </button>
-                                    </div>
-                                </div>`;
-                        }
-                        
-                        // Clear the auto-added empty row
-                        const orderItemsDiv = block.querySelector('.order-items');
-                        orderItemsDiv.innerHTML = ''; 
-                        
-                        c.items.forEach(item => {
-                            const itemId = addItemRow(blockId);
-                            const row = document.getElementById(`item-${itemId}`);
-                            row.querySelector('.item-id').value = item.container_item_id;
-                            row.querySelector('.item-search').value = item.brand_name;
-                            row.querySelector('.item-qty').value = item.qty;
-                            row.querySelector('.item-dmg').value = item.damaged_qty;
-                            row.querySelector('.item-price').value = item.selling_price;
-                            row.querySelector('.item-discount').value = item.discount_amount || 0; // Assuming discount_amount is available, default to 0
-                            row.querySelector('.cost-price').value = item.cost_price;
+                    if (d.customers) {
+                        d.customers.forEach(c => {
+                            const blockId = addCustomerBlock(c.id);
+                            selectCustomer(blockId, c.customer_id, c.name, c.contact_number);
                             
-                            const stockDiv = row.querySelector('.stock-info');
-                            if(stockDiv) {
-                                const bgs = stockDiv.querySelectorAll('span');
-                                if(bgs.length >= 2) { // Ensure both badges exist before updating
-                                    bgs[0].innerHTML = `<i class="fa-solid fa-box-archive mr-1"></i> Stock: ${item.available_qty} PKTS`;
-                                    bgs[1].innerHTML = `<i class="fa-solid fa-coins mr-1"></i> Unit Cost: LKR ${item.cost_price}`;
-                                    stockDiv.classList.remove('hidden');
-                                }
+                            const block = document.getElementById(`cust-${blockId}`);
+                            if (c.bill_image) {
+                                block.dataset.existingBill = c.bill_image;
+                                document.getElementById(`bill-label-${blockId}`).innerHTML = `
+                                    <div class="flex items-center gap-2 animate-[scaleIn_0.2s_ease]">
+                                        <button type="button" onclick="document.getElementById('bill-input-${blockId}').click()" class="h-[36px] px-4 rounded-xl bg-indigo-600 text-white hover:bg-black transition-all flex items-center shadow-lg shadow-indigo-600/20 group">
+                                            <i class="fa-solid fa-image mr-2 text-xs"></i>
+                                            <span class="text-[9px] font-black uppercase tracking-widest">${c.bill_image.length > 15 ? c.bill_image.substring(0, 12) + '...' : c.bill_image}</span>
+                                        </button>
+                                        <div class="flex gap-1">
+                                            <a href="../uploads/bills/${c.bill_image}" target="_blank" class="w-[36px] h-[36px] rounded-xl bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center border border-indigo-100 shadow-sm group" title="View Full Bill Image">
+                                                <i class="fa-solid fa-expand group-hover:scale-110 transition-transform text-xs"></i>
+                                            </a>
+                                            <button type="button" onclick="removeStoredBill('${blockId}')" class="w-[36px] h-[36px] rounded-xl bg-rose-50 text-rose-500 hover:bg-rose-600 hover:text-white transition-all flex items-center justify-center border border-rose-100 shadow-sm group" title="Remove Stored Bill">
+                                                <i class="fa-solid fa-xmark group-hover:scale-110 transition-transform text-sm"></i>
+                                            </button>
+                                        </div>
+                                    </div>`;
+                            }
+                            
+                            // Clear the auto-added empty row
+                            const orderItemsDiv = block.querySelector('.order-items');
+                            orderItemsDiv.innerHTML = ''; 
+                            
+                            if (c.items) {
+                                c.items.forEach(item => {
+                                    const itemId = addItemRow(blockId);
+                                    const row = document.getElementById(`item-${itemId}`);
+                                    if(row) {
+                                        const elId = row.querySelector('.item-id'); if(elId) elId.value = item.container_item_id || '';
+                                        const elSearch = row.querySelector('.item-search'); if(elSearch) elSearch.value = item.brand_name || '';
+                                        const elQty = row.querySelector('.item-qty'); if(elQty) elQty.value = item.qty || 0;
+                                        const elDmg = row.querySelector('.item-dmg'); if(elDmg) elDmg.value = item.damaged_qty || 0;
+                                        const elPrice = row.querySelector('.item-price'); if(elPrice) elPrice.value = item.selling_price || 0;
+                                        const elDiscount = row.querySelector('.item-discount'); if(elDiscount) elDiscount.value = item.discount_amount || 0;
+                                        const elCost = row.querySelector('.cost-price'); if(elCost) elCost.value = item.cost_price || 0;
+                                        
+                                        const stockDiv = row.querySelector('.stock-info');
+                                        if(stockDiv) {
+                                            const bgs = stockDiv.querySelectorAll('span');
+                                            if(bgs.length >= 2) { 
+                                                bgs[0].innerHTML = `<i class="fa-solid fa-box-archive mr-1"></i> Stock: ${item.available_qty || 0} PKTS`;
+                                                bgs[1].innerHTML = `<i class="fa-solid fa-coins mr-1"></i> Unit Cost: LKR ${item.cost_price || 0}`;
+                                                stockDiv.classList.remove('hidden');
+                                            }
+                                        }
+                                    }
+                                });
                             }
                         });
-                    });
+                    }
                     
                     calculateTotals();
                     
-                    setTimeout(() => { isDirty = false; }, 100); // Reset dirty flag after automated populations
+                    setTimeout(() => { isDirty = false; }, 100);
+                }).catch(err => {
+                    console.error("Error loading delivery details:", err);
+                    alert("Failed to load delivery details. Please check connection.");
                 });
         }
 
@@ -1236,7 +1275,7 @@ $deliveries = $stmt->fetchAll();
         }
 
         function addItemRow(blockId) {
-            const id = Date.now() + Math.random();
+            const id = (Date.now() + Math.random()).toString().replace('.', '');
             const html = `
                 <div id="item-${id}" class="space-y-1">
                     <div class="grid grid-cols-12 gap-2 items-center">
@@ -1487,6 +1526,8 @@ $deliveries = $stmt->fetchAll();
                         const paid = parseFloat(c.total_paid);
                         const pending = total - paid;
                         
+                        const safeName = c.name.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                        
                         html += `
                             <div class="glass-card p-6 border-slate-200/50 bg-white/40">
                                 <div class="flex flex-col md:flex-row md:items-center gap-8 mb-8">
@@ -1516,7 +1557,7 @@ $deliveries = $stmt->fetchAll();
                                     </div>
                                     
                                     <div class="md:ml-auto">
-                                        <button onclick="openAddPayment(${c.id}, '${c.name.replace(/'/g, "\\'")}', ${pending}, ${c.customer_id})" class="bg-indigo-600 hover:bg-black text-white px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-2xl shadow-indigo-600/20 transition-all flex items-center gap-3 group">
+                                        <button onclick="openAddPayment(${c.id}, '${safeName}', ${pending}, ${c.customer_id})" class="bg-indigo-600 hover:bg-black text-white px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-2xl shadow-indigo-600/20 transition-all flex items-center gap-3 group">
                                             <i class="fa-solid fa-plus-circle group-hover:rotate-90 transition-transform"></i>
                                             <span>New Payment</span>
                                         </button>
@@ -1525,7 +1566,7 @@ $deliveries = $stmt->fetchAll();
 
                                 <div class="border-t border-slate-100 pt-5">
                                     <h5 class="text-[9px] uppercase font-black text-slate-400 tracking-[0.2em] mb-4">Transaction History</h5>
-                                    ${c.payments.length ? `
+                                    ${c.payments && c.payments.length ? `
                                         <div class="overflow-x-auto">
                                             <table class="w-full text-left">
                                                 <thead>
@@ -1578,6 +1619,9 @@ $deliveries = $stmt->fetchAll();
                     
                     container.innerHTML = html;
                     document.getElementById('payments-modal').classList.remove('hidden');
+                }).catch(err => {
+                    console.error("Error loading payments:", err);
+                    alert("Failed to load payments details. Please check your connection.");
                 });
         }
 
@@ -1587,12 +1631,28 @@ $deliveries = $stmt->fetchAll();
             document.getElementById('payment_dc_id').value = dcId;
             document.getElementById('add-payment-cust-name').innerText = name;
             document.getElementById('payment_amount').value = pending;
+            document.getElementById('pending_amount_display').innerText = 'LKR ' + parseFloat(pending).toLocaleString(undefined, {minimumFractionDigits: 2});
             document.getElementById('add-payment-modal').classList.remove('hidden');
-            togglePaymentFields();
+            selectPaymentMethod('Cash'); // Re-initialize as Cash by default
         }
 
-        function togglePaymentFields() {
-            const type = document.getElementById('payment_type').value;
+        function selectPaymentMethod(type) {
+            document.getElementById('payment_type_val').value = type;
+            
+            const cards = document.querySelectorAll('.pay-method-card');
+            cards.forEach(card => {
+                const cardType = card.dataset.type;
+                if (cardType === type) {
+                    card.className = "pay-method-card bg-indigo-50 border-2 border-indigo-500 rounded-xl p-3 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all hover:bg-indigo-100";
+                    card.querySelector('i').className = card.querySelector('i').className.replace('text-slate-500', 'text-indigo-600');
+                    card.querySelector('span').className = card.querySelector('span').className.replace('text-slate-600', 'text-indigo-700');
+                } else {
+                    card.className = "pay-method-card border-2 border-slate-100 rounded-xl p-3 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all hover:border-slate-300 hover:bg-slate-50";
+                    card.querySelector('i').className = card.querySelector('i').className.replace('text-indigo-600', 'text-slate-500');
+                    card.querySelector('span').className = card.querySelector('span').className.replace('text-indigo-700', 'text-slate-600');
+                }
+            });
+
             document.getElementById('bank_section').classList.toggle('hidden', type !== 'Account Transfer' && type !== 'Cheque');
             document.getElementById('cheque_section').classList.toggle('hidden', type !== 'Cheque');
             document.getElementById('proof_section').classList.toggle('hidden', type !== 'Account Transfer' && type !== 'Cheque');
@@ -1698,8 +1758,9 @@ $deliveries = $stmt->fetchAll();
 
         // Updated closeModal to support generic modal IDs
         function closeModal(id) {
-            if (id) {
-                document.getElementById(id).classList.add('hidden');
+            if (typeof id === 'string' && id.trim() !== '') {
+                const el = document.getElementById(id);
+                if (el) el.classList.add('hidden');
                 return;
             }
             // Check dirty flag for route-modal
@@ -1715,13 +1776,19 @@ $deliveries = $stmt->fetchAll();
 
         function confirmDeleteTrip(id) {
             if(confirm(`Are you sure you want to PERMANENTLY DELETE Delivery #DEL-${id}? All associated data and stocks will be affected.`)) {
-                fetch('nwdelivery.php', {
+                const formData = new FormData();
+                formData.append('action', 'delete_delivery');
+                formData.append('id', id);
+                
+                fetch(window.location.pathname, {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-                    body: `action=delete_delivery&id=${id}`
+                    body: formData
                 }).then(r => r.json()).then(res => {
                     if(res.success) location.reload();
                     else alert(res.message);
+                }).catch(err => {
+                    console.error("Error deleting delivery:", err);
+                    alert("Failed to delete. Please check your connection.");
                 });
             }
         }
