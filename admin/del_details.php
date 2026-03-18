@@ -281,6 +281,41 @@ $pending_payment = $total_revenue - $total_paid;
             .footer-analysis {
                 display: block !important;
             }
+
+            /* Compact PDF layout */
+            main {
+                padding: 4px !important;
+                gap: 8px !important;
+            }
+            .glass-card {
+                margin-bottom: 8px !important;
+                border-radius: 8px !important;
+            }
+            .p-6,
+            .p-8 {
+                padding: 8px !important;
+            }
+            .py-8 {
+                padding-top: 6px !important;
+                padding-bottom: 6px !important;
+            }
+            .px-4,
+            .px-6,
+            .px-8 {
+                padding-left: 6px !important;
+                padding-right: 6px !important;
+            }
+            .space-y-8 > :not([hidden]) ~ :not([hidden]) {
+                margin-top: 8px !important;
+            }
+            .space-y-6 > :not([hidden]) ~ :not([hidden]) {
+                margin-top: 6px !important;
+            }
+
+            /* No proof photos in printed PDF */
+            .print-hide-proofs {
+                display: none !important;
+            }
         }
         .footer-analysis { display: none; }
         .print-invoice-head { display: none; }
@@ -493,7 +528,7 @@ $pending_payment = $total_revenue - $total_paid;
                 $customerProofPaths = array_values(array_unique($customerProofPaths));
                 if(!empty($customerProofPaths) || $hasBillPath): 
                 ?>
-                <div class="px-6 pb-6 space-y-4">
+                <div class="px-6 pb-6 space-y-4 print-hide-proofs">
                     <h4 class="text-[10px] font-black text-slate-400 uppercase tracking-widest print-label">Encoded Documentation</h4>
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-4 proof-images">
                         <?php if($hasBillPath): ?>
@@ -652,23 +687,33 @@ $pending_payment = $total_revenue - $total_paid;
             
             <form id="payment-form" class="space-y-6">
                 <input type="hidden" name="dc_id" id="payment_dc_id">
-                <div class="grid grid-cols-2 gap-6">
-                    <div>
-                        <label class="text-[10px] font-black text-slate-400 uppercase ml-1 mb-2 block">Type</label>
-                        <select name="type" id="payment_type_select" class="input-glass w-full h-[52px]" onchange="togglePaymentFields()">
-                            <option value="Cash">Cash</option>
-                            <option value="Account Transfer">Bank Transfer</option>
-                            <option value="Cheque">Cheque</option>
-                            <option value="Card">Card</option>
-                        </select>
+
+                <input type="hidden" name="type" id="payment_type_val" value="Cash">
+
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                    <div class="pay-method-card bg-indigo-50 border-2 border-indigo-500 rounded-xl p-3 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all hover:bg-indigo-100" onclick="selectPaymentMethod('Cash')" data-type="Cash">
+                        <i class="fa-solid fa-money-bill-wave text-indigo-600 text-xl"></i>
+                        <span class="text-[10px] font-black uppercase text-indigo-700 tracking-wider">Cash</span>
                     </div>
-                    <div>
-                        <label class="text-[10px] font-black text-slate-400 uppercase ml-1 mb-2 block">Amount</label>
-                        <input type="number" name="amount" required step="0.01" class="input-glass w-full h-[52px]">
+                    <div class="pay-method-card border-2 border-slate-100 rounded-xl p-3 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all hover:border-slate-300 hover:bg-slate-50" onclick="selectPaymentMethod('Cheque')" data-type="Cheque">
+                        <i class="fa-solid fa-money-check-dollar text-slate-500 text-xl"></i>
+                        <span class="text-[10px] font-black uppercase text-slate-600 tracking-wider">Cheque</span>
+                    </div>
+                    <div class="pay-method-card border-2 border-slate-100 rounded-xl p-3 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all hover:border-slate-300 hover:bg-slate-50" onclick="selectPaymentMethod('Account Transfer')" data-type="Account Transfer">
+                        <i class="fa-solid fa-building-columns text-slate-500 text-xl"></i>
+                        <span class="text-[10px] font-black uppercase text-slate-600 tracking-wider">Bank</span>
+                    </div>
+                    <div class="pay-method-card border-2 border-slate-100 rounded-xl p-3 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all hover:border-slate-300 hover:bg-slate-50" onclick="selectPaymentMethod('Card')" data-type="Card">
+                        <i class="fa-solid fa-credit-card text-slate-500 text-xl"></i>
+                        <span class="text-[10px] font-black uppercase text-slate-600 tracking-wider">Card</span>
                     </div>
                 </div>
 
                 <div class="grid grid-cols-2 gap-6">
+                    <div>
+                        <label class="text-[10px] font-black text-slate-400 uppercase ml-1 mb-2 block">Amount</label>
+                        <input type="number" name="amount" required step="0.01" class="input-glass w-full h-[52px]">
+                    </div>
                     <div>
                         <label class="text-[10px] font-black text-slate-400 uppercase ml-1 mb-2 block">Date</label>
                         <input type="date" name="date" value="<?php echo date('Y-m-d'); ?>" class="input-glass w-full h-[52px]">
@@ -677,10 +722,15 @@ $pending_payment = $total_revenue - $total_paid;
 
                 <div id="bank_fields_container" class="hidden">
                     <label class="text-[10px] font-black text-slate-400 uppercase ml-1 mb-2 block">Select Bank</label>
-                    <div class="relative">
-                        <input type="text" id="bank_search" placeholder="Search saved banks..." class="input-glass w-full h-[52px]" onkeyup="searchBanks(this.value)">
-                        <input type="hidden" name="bank_id" id="selected_bank_id">
-                        <div id="bank_results" class="absolute w-full mt-1 bg-white border border-slate-100 rounded-xl shadow-2xl z-50 hidden"></div>
+                    <div class="flex gap-2">
+                        <div class="relative flex-1">
+                            <input type="text" id="bank_search" placeholder="Search saved banks..." class="input-glass w-full h-[52px]" onkeyup="searchBanks(this.value)">
+                            <input type="hidden" name="bank_id" id="selected_bank_id">
+                            <div id="bank_results" class="absolute w-full mt-1 bg-white border border-slate-100 rounded-xl shadow-2xl z-50 hidden overflow-hidden"></div>
+                        </div>
+                        <button type="button" onclick="openNewBankModal()" class="w-[52px] h-[52px] rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all">
+                            <i class="fa-solid fa-plus text-sm"></i>
+                        </button>
                     </div>
                 </div>
 
@@ -699,7 +749,37 @@ $pending_payment = $total_revenue - $total_paid;
                     </div>
                 </div>
 
+                <div id="proof_section" class="hidden">
+                    <label class="text-[10px] font-black text-slate-400 uppercase ml-1 mb-2 block">Payment Proof / Slip</label>
+                    <input type="file" name="proof" class="input-glass w-full h-[52px] py-3 text-xs">
+                </div>
+
                 <button type="submit" class="w-full bg-emerald-600 text-white py-4 rounded-3xl font-black uppercase">Finalize Payment</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- New Bank Modal -->
+    <div id="new-bank-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xl z-[60] flex items-center justify-center p-4 hidden no-print">
+        <div class="glass-card w-full max-w-sm p-8 shadow-2xl border-indigo-400/30">
+            <h3 class="text-xl font-black text-slate-900 font-['Outfit'] mb-6">New Bank Account</h3>
+            <form id="new-bank-form" class="space-y-5">
+                <div>
+                    <label class="text-[10px] uppercase font-black text-slate-400 ml-1 mb-1.5 block">Bank Name</label>
+                    <input type="text" name="name" required class="input-glass w-full h-[45px] font-bold uppercase" placeholder="e.g. SAMPATH / BOC">
+                </div>
+                <div>
+                    <label class="text-[10px] uppercase font-black text-slate-400 ml-1 mb-1.5 block">Account Number</label>
+                    <input type="text" name="acc_no" required class="input-glass w-full h-[45px] font-black">
+                </div>
+                <div>
+                    <label class="text-[10px] uppercase font-black text-slate-400 ml-1 mb-1.5 block">Account Name</label>
+                    <input type="text" name="acc_name" required class="input-glass w-full h-[45px] font-bold">
+                </div>
+                <div class="flex gap-3 pt-2">
+                    <button type="button" onclick="closeModal('new-bank-modal')" class="flex-1 py-3 text-[10px] font-black uppercase text-slate-400">Cancel</button>
+                    <button type="submit" class="flex-[2] bg-indigo-600 text-white py-3 rounded-2xl text-[10px] font-black uppercase shadow-lg">Save Account</button>
+                </div>
             </form>
         </div>
     </div>
@@ -709,9 +789,30 @@ $pending_payment = $total_revenue - $total_paid;
         function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 
         function togglePaymentFields() {
-            const type = document.getElementById('payment_type_select').value;
+            const type = document.getElementById('payment_type_val').value;
             document.getElementById('bank_fields_container').classList.toggle('hidden', type !== 'Account Transfer' && type !== 'Cheque');
             document.getElementById('cheque_fields_container').classList.toggle('hidden', type !== 'Cheque');
+            document.getElementById('proof_section').classList.toggle('hidden', type !== 'Account Transfer' && type !== 'Cheque');
+        }
+
+        function selectPaymentMethod(type) {
+            document.getElementById('payment_type_val').value = type;
+
+            const cards = document.querySelectorAll('.pay-method-card');
+            cards.forEach(card => {
+                const cardType = card.dataset.type;
+                if (cardType === type) {
+                    card.className = 'pay-method-card bg-indigo-50 border-2 border-indigo-500 rounded-xl p-3 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all hover:bg-indigo-100';
+                    card.querySelector('i').className = card.querySelector('i').className.replace('text-slate-500', 'text-indigo-600');
+                    card.querySelector('span').className = card.querySelector('span').className.replace('text-slate-600', 'text-indigo-700');
+                } else {
+                    card.className = 'pay-method-card border-2 border-slate-100 rounded-xl p-3 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all hover:border-slate-300 hover:bg-slate-50';
+                    card.querySelector('i').className = card.querySelector('i').className.replace('text-indigo-600', 'text-slate-500');
+                    card.querySelector('span').className = card.querySelector('span').className.replace('text-indigo-700', 'text-slate-600');
+                }
+            });
+
+            togglePaymentFields();
         }
 
         function updateDamage(diId, val) {
@@ -744,17 +845,62 @@ $pending_payment = $total_revenue - $total_paid;
             fetch(`?action=search_bank&id=<?php echo $id; ?>&term=${term}`)
                 .then(r => r.json()).then(data => {
                     let html = '';
-                    data.forEach(b => {
-                        html += `<div class="p-3 hover:bg-slate-50 cursor-pointer text-xs font-bold" onclick="selectBank(${b.id}, '${b.name}')">${b.name}</div>`;
-                    });
+                    if (data.length) {
+                        data.forEach(b => {
+                            const safeName = String(b.name || '').replace(/'/g, "\\'");
+                            const safeAcc = String(b.account_number || '').replace(/'/g, "\\'");
+                            html += `<div class="p-3 hover:bg-indigo-50 cursor-pointer border-b border-slate-50 last:border-0" onmousedown="selectBank(${b.id}, '${safeName}', '${safeAcc}')">
+                                <p class="text-xs font-black text-slate-800">${b.name}</p>
+                                <p class="text-[9px] text-slate-400 font-bold uppercase">${b.account_number || ''} ${b.account_name ? '&bull; ' + b.account_name : ''}</p>
+                            </div>`;
+                        });
+                    } else {
+                        const safeTerm = String(term).replace(/'/g, "\\'");
+                        html = `<div class="p-3 text-center">
+                            <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">No bank found for "${term}"</p>
+                            <button type="button" onclick="openNewBankModalPreFilled('${safeTerm}')" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors">
+                                <i class="fa-solid fa-plus mr-1"></i>Create New Bank
+                            </button>
+                        </div>`;
+                    }
                     const res = document.getElementById('bank_results'); res.innerHTML = html; res.classList.remove('hidden');
                 });
         }
-        function selectBank(id, name) {
+
+        function selectBank(id, name, accNo = '') {
             document.getElementById('selected_bank_id').value = id;
-            document.getElementById('bank_search').value = name;
+            document.getElementById('bank_search').value = accNo ? `${name} (${accNo})` : name;
             document.getElementById('bank_results').classList.add('hidden');
         }
+
+        function openNewBankModal() {
+            document.getElementById('new-bank-modal').classList.remove('hidden');
+        }
+
+        function openNewBankModalPreFilled(name) {
+            document.getElementById('bank_results').classList.add('hidden');
+            const modal = document.getElementById('new-bank-modal');
+            modal.classList.remove('hidden');
+            const nameField = modal.querySelector('[name="name"]');
+            if (nameField) nameField.value = name;
+        }
+
+        document.getElementById('new-bank-form').onsubmit = function(e) {
+            e.preventDefault();
+            const fd = new FormData(this);
+            fd.append('action', 'create_bank');
+            fetch(`?id=<?php echo $id; ?>`, { method: 'POST', body: fd })
+                .then(r => r.json()).then(res => {
+                    if (!res.success) {
+                        alert(res.message || 'Failed to save bank.');
+                        return;
+                    }
+                    const accNo = this.querySelector('[name="acc_no"]').value;
+                    selectBank(res.id, res.name, accNo);
+                    closeModal('new-bank-modal');
+                    this.reset();
+                });
+        };
 
         function searchChequeCustomers(term) {
             if(term.length < 2) return document.getElementById('chq_cust_results').classList.add('hidden');
@@ -789,6 +935,11 @@ $pending_payment = $total_revenue - $total_paid;
         function openPaymentModal(dcId, name) {
             document.getElementById('payment_dc_id').value = dcId;
             document.getElementById('modal-cust-label').innerText = "Customer: " + name;
+            document.getElementById('selected_bank_id').value = '';
+            document.getElementById('bank_search').value = '';
+            document.getElementById('selected_chq_cust_id').value = '';
+            document.getElementById('chq_cust_search').value = '';
+            selectPaymentMethod('Cash');
             openModal('payment-modal');
         }
         function uploadBill(dcId) {
