@@ -484,6 +484,19 @@ $deliveries = $stmt->fetchAll();
 
         .custom-scroll::-webkit-scrollbar { width: 6px; }
         .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+
+        .glass-card:focus-within { z-index: 10; position: relative; }
+        
+        .brand-results div, .customer-results div, #emp_results div, #bank_results div, #chq_cust_results div {
+            padding: 10px 14px;
+            transition: all 0.2s;
+            border-bottom: 1px solid #f1f5f9;
+        }
+        
+        .brand-results div:hover, .customer-results div:hover, #emp_results div:hover, #bank_results div:hover, #chq_cust_results div:hover {
+            background-color: #f8fafc;
+            color: #0891b2;
+        }
     </style>
 </head>
 <body class="flex flex-col">
@@ -650,7 +663,7 @@ $deliveries = $stmt->fetchAll();
                                 <div class="relative w-[300px]">
                                     <i class="fa-solid fa-user-plus absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-[10px]"></i>
                                     <input type="text" id="emp_search" placeholder="Search staff members..." class="input-glass w-full h-[38px] pl-9 text-xs font-bold text-slate-800" onkeyup="searchEmployees(this.value)">
-                                    <div id="emp_results" class="absolute w-full mt-1 bg-white/80 backdrop-blur-xl border border-white/40 rounded-xl shadow-2xl z-20 hidden overflow-hidden"></div>
+                                    <div id="emp_results" class="absolute w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-[100] hidden overflow-hidden"></div>
                                 </div>
                                 <div id="assigned_staff" class="flex flex-wrap gap-2 flex-1"></div>
                             </div>
@@ -783,7 +796,7 @@ $deliveries = $stmt->fetchAll();
                         <div class="flex gap-2">
                             <div class="relative flex-1">
                                 <input type="text" id="bank_search" placeholder="Search saved banks..." class="input-glass w-full h-[48px] font-bold" onkeyup="searchBanks(this.value)">
-                                <div id="bank_results" class="absolute w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-[70] hidden overflow-hidden"></div>
+                                <div id="bank_results" class="absolute w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-[100] hidden overflow-hidden"></div>
                             </div>
                             <button type="button" onclick="openNewBankModal()" class="w-[48px] h-[48px] rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all">
                                 <i class="fa-solid fa-plus text-sm"></i>
@@ -803,7 +816,7 @@ $deliveries = $stmt->fetchAll();
                         <div class="relative">
                             <label class="text-[10px] uppercase font-black text-slate-500 tracking-widest ml-1 mb-1.5 block">Payer (Client)</label>
                             <input type="text" id="chq_cust_search" placeholder="Search..." class="input-glass w-full h-[48px] font-bold" onkeyup="searchChequeCustomers(this.value)">
-                            <div id="chq_cust_results" class="absolute w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-[70] hidden overflow-hidden"></div>
+                            <div id="chq_cust_results" class="absolute w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-[100] hidden overflow-hidden"></div>
                             <input type="hidden" name="chq_cust_id" id="selected_chq_cust_id">
                         </div>
                     </div>
@@ -1206,7 +1219,7 @@ $deliveries = $stmt->fetchAll();
                              </button>
                         </div>
                     </div>
-                    <div class="hidden customer-results absolute w-full left-0 top-[110px] md:top-[80px] z-30 bg-white/80 backdrop-blur-xl border border-white/40 rounded-2xl shadow-2xl p-2 max-w-md mx-6"></div>
+                    <div class="hidden customer-results absolute w-full left-0 top-[110px] md:top-[80px] z-[100] bg-white border border-slate-200 rounded-2xl shadow-2xl p-2 max-w-md mx-6"></div>
                     
                     <div class="selected-customer-info mb-6 hidden">
                         <div class="bg-emerald-500/10 p-3.5 text-emerald-700 text-sm font-bold flex justify-between items-center border border-emerald-500/20 rounded-xl mb-3 shadow-inner">
@@ -1324,7 +1337,7 @@ $deliveries = $stmt->fetchAll();
                     <div class="grid grid-cols-12 gap-2 items-center">
                         <div class="col-span-4 relative">
                             <input type="text" placeholder="Product..." class="input-glass w-full h-[36px] text-xs font-bold item-search" onkeyup="searchBrands(this.value, '${id}')">
-                            <div class="brand-results hidden absolute w-full mt-1 bg-white/80 backdrop-blur-xl border border-white/40 rounded-xl shadow-2xl z-40 p-1"></div>
+                            <div class="brand-results hidden absolute w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-[100] p-1"></div>
                             <input type="hidden" class="item-id">
                             <input type="hidden" class="cost-price">
                         </div>
@@ -1748,7 +1761,12 @@ $deliveries = $stmt->fetchAll();
                             </div>`;
                         });
                     } else {
-                        html = `<div class="p-3 text-center text-[10px] font-bold text-slate-400 italic">Account not found.</div>`;
+                        html = `<div class="p-3 text-center">
+                            <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2">No bank found for "${term}"</p>
+                            <button type="button" onclick="openNewBankModalPreFilled('${term.replace(/'/g, "\\'")}')" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors">
+                                <i class="fa-solid fa-plus mr-1"></i>Create New Bank
+                            </button>
+                        </div>`;
                     }
                     const res = document.getElementById('bank_results');
                     res.innerHTML = html;
@@ -1764,6 +1782,15 @@ $deliveries = $stmt->fetchAll();
 
         function openNewBankModal() {
             document.getElementById('new-bank-modal').classList.remove('hidden');
+        }
+
+        function openNewBankModalPreFilled(name) {
+            document.getElementById('bank_results').classList.add('hidden');
+            const modal = document.getElementById('new-bank-modal');
+            modal.classList.remove('hidden');
+            // Pre-fill bank name field if it exists
+            const nameField = modal.querySelector('[name="name"]');
+            if(nameField) nameField.value = name;
         }
 
         function saveNewBank(e) {

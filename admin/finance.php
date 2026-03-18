@@ -87,16 +87,16 @@ $unifiedQuery = "
     SELECT 
         'delivery' as source_type,
         dp.id as pay_id,
-        dp.payment_date as pay_date,
+        DATE(dp.payment_date) as pay_date,
         dp.amount,
         dp.payment_type as pay_method,
-        CONCAT('DEL-', LPAD(dc.delivery_id, 4, '0')) as reference_id,
-        cust.name as entity_name,
+        CONCAT('DEL-', LPAD(IFNULL(dc.delivery_id, 0), 4, '0')) as reference_id,
+        IFNULL(cust.name, '(Unknown Customer)') as entity_name,
         TRIM(CONCAT_WS(' ', IFNULL(dp.cheque_number, ''), IFNULL(bk.name, ''))) as cheque_or_notes,
         dp.proof_image as proof
     FROM delivery_payments dp
-    JOIN delivery_customers dc ON dp.delivery_customer_id = dc.id
-    JOIN customers cust ON dc.customer_id = cust.id
+    LEFT JOIN delivery_customers dc ON dp.delivery_customer_id = dc.id
+    LEFT JOIN customers cust ON dc.customer_id = cust.id
     LEFT JOIN banks bk ON dp.bank_id = bk.id
 ";
 

@@ -150,6 +150,50 @@ $stmtPayTypes = $pdo->prepare("
 $stmtPayTypes->execute($params);
 $pay_types_data = $stmtPayTypes->fetchAll(PDO::FETCH_ASSOC);
 
+if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename=business_report_' . date('Y-m-d') . '.csv');
+    
+    $output = fopen('php://output', 'w');
+    
+    // Total Values
+    fputcsv($output, ['KEY METRICS', 'VALUES']);
+    fputcsv($output, ['Total Deliveries', $total_deliveries]);
+    fputcsv($output, ['Unique Clients', $total_customers]);
+    fputcsv($output, ['Total Sales Revenue (LKR)', number_format($total_earnings, 2, '.', '')]);
+    fputcsv($output, ['Total Payments Got (LKR)', number_format($total_payments_got, 2, '.', '')]);
+    fputcsv($output, ['Outstanding Balance (LKR)', number_format($pending_payments, 2, '.', '')]);
+    fputcsv($output, ['Total Expenses (LKR)', number_format($total_expenses, 2, '.', '')]);
+    fputcsv($output, ['Operational Profit (LKR)', number_format($profit, 2, '.', '')]);
+    fputcsv($output, ['Employee Salary Payments (LKR)', number_format($total_emp_payments, 2, '.', '')]);
+    fputcsv($output, []);
+    
+    // Bank Details
+    fputcsv($output, ['BANK DETAILS']);
+    fputcsv($output, ['Bank Name', 'Account Number', 'Total Payments Collected (LKR)']);
+    foreach ($banks_data as $b) {
+        fputcsv($output, [$b['bank_name'], $b['account_number'], number_format($b['total_amount'], 2, '.', '')]);
+    }
+    fputcsv($output, []);
+    
+    // Most Sold Items
+    fputcsv($output, ['MOST SOLD ITEMS']);
+    fputcsv($output, ['Brand Name', 'Total Quantity (PKTS)']);
+    foreach ($items_data as $i) {
+        fputcsv($output, [$i['brand_name'], $i['total_qty']]);
+    }
+    fputcsv($output, []);
+    
+    // Payment Types
+    fputcsv($output, ['PAYMENT TYPES']);
+    fputcsv($output, ['Payment Type', 'Total Amount (LKR)']);
+    foreach ($pay_types_data as $pt) {
+        fputcsv($output, [$pt['payment_type'], number_format($pt['total_amount'], 2, '.', '')]);
+    }
+    
+    fclose($output);
+    exit;
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -235,10 +279,10 @@ $pay_types_data = $stmtPayTypes->fetchAll(PDO::FETCH_ASSOC);
                 </div>
             </div>
             <div class="flex items-center space-x-3">
-                <button onclick="window.print()" class="bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:text-indigo-600 px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center space-x-2 shadow-sm transition-all text-nowrap">
-                    <i class="fa-solid fa-download text-base"></i>
-                    <span>Download Report</span>
-                </button>
+                <a href="?<?php echo http_build_query(array_merge($_GET, ['action' => 'export_excel'])); ?>" class="bg-emerald-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center space-x-2 shadow-sm shadow-emerald-600/20 transition-all text-nowrap hover:bg-emerald-700">
+                    <i class="fa-solid fa-file-excel text-base"></i>
+                    <span>Export Excel</span>
+                </a>
                 <div class="bg-indigo-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center space-x-3 shadow-lg shadow-indigo-600/20 text-nowrap">
                     <i class="fa-solid fa-calendar-check text-base"></i>
                     <span>REPORT GENERATED: <?php echo date('Y-M-d'); ?></span>
@@ -295,9 +339,7 @@ $pay_types_data = $stmtPayTypes->fetchAll(PDO::FETCH_ASSOC);
                 </div>
                 <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Deliveries</p>
                 <h2 class="text-3xl font-black text-slate-900 tracking-tighter"><?php echo number_format($total_deliveries); ?></h2>
-                <div class="mt-3 flex items-center text-[10px] text-cyan-600 font-bold uppercase tracking-tight">
-                    <i class="fa-solid fa-arrow-trend-up mr-2"></i> Scheduled Trips
-                </div>
+             
             </div>
 
             <!-- Customers -->
@@ -305,11 +347,9 @@ $pay_types_data = $stmtPayTypes->fetchAll(PDO::FETCH_ASSOC);
                 <div class="stat-icon bg-indigo-100/50 text-indigo-600 mb-4">
                     <i class="fa-solid fa-users text-2xl"></i>
                 </div>
-                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Unique Clients</p>
+                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">total customers</p>
                 <h2 class="text-3xl font-black text-slate-900 tracking-tighter"><?php echo number_format($total_customers); ?></h2>
-                <div class="mt-3 flex items-center text-[10px] text-indigo-600 font-bold uppercase tracking-tight">
-                    <i class="fa-solid fa-circle-check mr-2"></i> Active Accounts
-                </div>
+          
             </div>
 
             <!-- Revenue -->
@@ -319,9 +359,7 @@ $pay_types_data = $stmtPayTypes->fetchAll(PDO::FETCH_ASSOC);
                 </div>
                 <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Sales Revenue</p>
                 <h2 class="text-3xl font-black text-emerald-600 tracking-tighter">LKR <?php echo number_format($total_earnings, 2); ?></h2>
-                <div class="mt-3 flex items-center text-[10px] text-emerald-600 font-bold uppercase tracking-tight">
-                    <i class="fa-solid fa-chart-line mr-2"></i> Subtotal Deducted
-                </div>
+         
             </div>
 
             <!-- Payments Got -->
@@ -329,11 +367,9 @@ $pay_types_data = $stmtPayTypes->fetchAll(PDO::FETCH_ASSOC);
                 <div class="stat-icon bg-blue-100/50 text-blue-600 mb-4">
                     <i class="fa-solid fa-hand-holding-dollar text-2xl"></i>
                 </div>
-                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Payments Got</p>
+                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Payments Got from customers</p>
                 <h2 class="text-3xl font-black text-blue-600 tracking-tighter">LKR <?php echo number_format($total_payments_got, 2); ?></h2>
-                <div class="mt-3 flex items-center text-[10px] text-blue-600 font-bold uppercase tracking-tight">
-                    <i class="fa-solid fa-coins mr-2"></i> Collected Cashflow
-                </div>
+              
             </div>
 
             <!-- Pending -->
@@ -341,11 +377,9 @@ $pay_types_data = $stmtPayTypes->fetchAll(PDO::FETCH_ASSOC);
                 <div class="stat-icon bg-rose-100/50 text-rose-600 mb-4">
                     <i class="fa-solid fa-wallet text-2xl"></i>
                 </div>
-                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Outstanding Balance</p>
+                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Pending Payments from deliveries</p>
                 <h2 class="text-3xl font-black text-rose-600 tracking-tighter">LKR <?php echo number_format($pending_payments, 2); ?></h2>
-                <div class="mt-3 flex items-center text-[10px] text-rose-600 font-bold uppercase tracking-tight">
-                    <i class="fa-solid fa-triangle-exclamation mr-2"></i> Total Due AR
-                </div>
+              
             </div>
 
             <!-- Total Expenses -->
@@ -355,9 +389,7 @@ $pay_types_data = $stmtPayTypes->fetchAll(PDO::FETCH_ASSOC);
                 </div>
                 <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Expenses</p>
                 <h2 class="text-3xl font-black text-orange-600 tracking-tighter">LKR <?php echo number_format($total_expenses, 2); ?></h2>
-                <div class="mt-3 flex items-center text-[10px] text-orange-600 font-bold uppercase tracking-tight">
-                    <i class="fa-solid fa-gas-pump mr-2"></i> Operational OpEx
-                </div>
+          
             </div>
 
             <!-- Profit -->
@@ -365,11 +397,10 @@ $pay_types_data = $stmtPayTypes->fetchAll(PDO::FETCH_ASSOC);
                 <div class="stat-icon bg-teal-100/50 text-teal-600 mb-4">
                     <i class="fa-solid fa-sack-dollar text-2xl"></i>
                 </div>
-                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Operational Profit</p>
+                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">
+                     Profit</p>
                 <h2 class="text-3xl font-black text-teal-600 tracking-tighter">LKR <?php echo number_format($profit, 2); ?></h2>
-                <div class="mt-3 flex items-center text-[10px] text-teal-600 font-bold uppercase tracking-tight">
-                    <i class="fa-solid fa-scale-balanced mr-2"></i> Net Earnings
-                </div>
+          
             </div>
 
             <!-- Employee Payments -->
@@ -377,11 +408,9 @@ $pay_types_data = $stmtPayTypes->fetchAll(PDO::FETCH_ASSOC);
                 <div class="stat-icon bg-amber-100/50 text-amber-600 mb-4">
                     <i class="fa-solid fa-money-check-dollar text-2xl"></i>
                 </div>
-                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Employee Salary Payments</p>
+                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Employee Salary Payments</p>
                 <h2 class="text-3xl font-black text-amber-600 tracking-tighter">LKR <?php echo number_format($total_emp_payments, 2); ?></h2>
-                <div class="mt-3 flex items-center text-[10px] text-amber-600 font-bold uppercase tracking-tight">
-                    <i class="fa-solid fa-users-gear mr-2"></i> Paid HR Overhead
-                </div>
+          
             </div>
         </div>
 

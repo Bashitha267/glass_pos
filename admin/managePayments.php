@@ -617,13 +617,42 @@ $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <div class="flex items-center justify-between mb-8">
                 <div>
                     <h3 class="text-xl font-black text-slate-900 font-['Outfit']">Payment History</h3>
-                    <p id="history-cust-name" class="text-[10px] uppercase font-black text-indigo-500 tracking-widest mt-1 uppercase mt-1">CLIENT NAME</p>
+                    <p id="history-cust-name" class="text-[10px] uppercase font-black text-indigo-500 tracking-widest mt-1">CLIENT NAME</p>
                 </div>
                 <button onclick="closeHistory()" class="text-slate-400 hover:text-rose-500 transition-colors"><i class="fa-solid fa-times text-2xl"></i></button>
             </div>
-
             <div id="history-content" class="overflow-x-auto min-h-[300px]">
                 <!-- History Table goes here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Add Bank Modal -->
+    <div id="create-bank-modal" class="fixed inset-0 bg-slate-900/70 backdrop-blur-md z-[70] hidden items-center justify-center p-4">
+        <div class="glass-card w-full max-w-md p-7 text-slate-800">
+            <div class="flex items-center justify-between mb-6">
+                <div>
+                    <h4 class="text-lg font-black text-slate-900 font-['Outfit']">Add New Bank</h4>
+                    <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-1">Register a new bank account</p>
+                </div>
+                <button type="button" onclick="closeCreateBankModal()" class="text-slate-400 hover:text-rose-500 transition-colors"><i class="fa-solid fa-times text-xl"></i></button>
+            </div>
+            <div class="space-y-4">
+                <div>
+                    <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Bank Name</label>
+                    <input type="text" id="new_bank_name" class="input-glass w-full" placeholder="e.g. Bank of Ceylon">
+                </div>
+                <div>
+                    <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Account Number</label>
+                    <input type="text" id="new_bank_acc_no" class="input-glass w-full" placeholder="e.g. 0023456789">
+                </div>
+                <div>
+                    <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Account Name</label>
+                    <input type="text" id="new_bank_acc_name" class="input-glass w-full" placeholder="e.g. Crystal Distributors">
+                </div>
+                <button type="button" onclick="saveNewBank()" class="w-full mt-2 bg-indigo-600 hover:bg-indigo-700 text-white py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-colors shadow-lg shadow-indigo-600/20">
+                    <i class="fa-solid fa-floppy-disk mr-2"></i>Save Bank
+                </button>
             </div>
         </div>
     </div>
@@ -669,7 +698,15 @@ $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             <p class="text-[9px] font-bold text-slate-400">ACC: ${b.account_number}</p>
                         </div>`;
                     });
-                    results.innerHTML = html || '<p class="p-4 text-center text-[9px] font-black text-slate-400 uppercase">No banks found</p>';
+                    if(!data.length) {
+                        html = `<div class="p-3 text-center">
+                            <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-3">No banks found for "${term}"</p>
+                            <button type="button" onclick="openCreateBankModal('${term}')" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors">
+                                <i class="fa-solid fa-plus mr-2"></i>Create New Bank
+                            </button>
+                        </div>`;
+                    }
+                    results.innerHTML = html;
                     results.classList.remove('hidden');
                 });
         }
@@ -685,6 +722,46 @@ $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
         function clearBank() {
             document.getElementById('selected_bank_id').value = '';
             document.getElementById('selected_bank_info').classList.add('hidden');
+        }
+
+        function openCreateBankModal(prefillName = '') {
+            document.getElementById('new_bank_name').value = prefillName;
+            document.getElementById('new_bank_acc_no').value = '';
+            document.getElementById('new_bank_acc_name').value = '';
+            document.getElementById('bank_results').classList.add('hidden');
+            const modal = document.getElementById('create-bank-modal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeCreateBankModal() {
+            const modal = document.getElementById('create-bank-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        function saveNewBank() {
+            const name = document.getElementById('new_bank_name').value.trim();
+            const acc_no = document.getElementById('new_bank_acc_no').value.trim();
+            const acc_name = document.getElementById('new_bank_acc_name').value.trim();
+            if (!name) { alert('Bank name is required.'); return; }
+
+            const formData = new FormData();
+            formData.append('action', 'create_bank');
+            formData.append('name', name);
+            formData.append('acc_no', acc_no);
+            formData.append('acc_name', acc_name);
+
+            fetch('managePayments.php', { method: 'POST', body: formData })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        selectBank(data.id, name, acc_no);
+                        closeCreateBankModal();
+                    } else {
+                        alert('Error saving bank.');
+                    }
+                });
         }
 
         function searchChequeCustomer(term) {

@@ -82,7 +82,7 @@ $dash_total_profit = $dash_total_revenue - $dash_total_cost - $dash_total_expens
         .glass-card {
             background: rgba(255, 255, 255, 0.85);
             backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 1);
+            border: 1.5px solid #334155;
             border-radius: 28px;
             transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
             box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.05);
@@ -186,14 +186,7 @@ $dash_total_profit = $dash_total_revenue - $dash_total_cost - $dash_total_expens
 
     <main class="max-w-[1400px] mx-auto w-full px-6 py-12 flex-grow">
         <!-- Hero Section -->
-        <div class="mb-14 relative">
-            <div class="absolute -left-4 top-0 w-1 h-20 bg-cyan-600 rounded-full"></div>
-            <p class="text-premium-label mb-2 ml-2">Main Dashboard</p>
-            <h2 class="text-5xl md:text-6xl font-black text-slate-900 font-['Outfit'] tracking-tight">
-                Welcome, <span class="bg-gradient-to-r from-cyan-600 to-blue-700 bg-clip-text text-transparent"><?php echo htmlspecialchars($username); ?></span>
-            </h2>
-            <div id="current-date" class="mt-3 ml-2 text-sm font-black text-slate-600 uppercase tracking-[0.2em]"></div>
-        </div>
+   
 
         <!-- Dashboard Grid -->
         <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
@@ -220,6 +213,19 @@ $dash_total_profit = $dash_total_revenue - $dash_total_cost - $dash_total_expens
                 </div>
                 <h3 class="text-premium-label text-slate-800 group-hover:text-blue-600 transition-colors">Container Management</h3>
             </a>
+            
+                 <a href="managePayments.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
+                <div class="action-icon w-16 h-16 bg-indigo-50 border-2 border-indigo-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
+                    <i class="fa-solid fa-clock-rotate-left text-3xl text-indigo-600"></i>
+                </div>
+                <h3 class="text-premium-label text-slate-800 group-hover:text-indigo-600 transition-colors">Payment Management</h3>
+            </a>
+                     <a href="salary.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
+                <div class="action-icon w-16 h-16 bg-emerald-50 border-2 border-emerald-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
+                    <i class="fa-solid fa-money-check-dollar text-3xl text-emerald-600"></i>
+                </div>
+                <h3 class="text-premium-label text-slate-800 group-hover:text-emerald-600 transition-colors">Salary & Payroll</h3>
+            </a>
 
             <!-- Manage Employees -->
             <a href="manageEmploy.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
@@ -230,20 +236,9 @@ $dash_total_profit = $dash_total_revenue - $dash_total_cost - $dash_total_expens
             </a>
 
             <!-- Salary -->
-            <a href="salary.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
-                <div class="action-icon w-16 h-16 bg-emerald-50 border-2 border-emerald-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
-                    <i class="fa-solid fa-money-check-dollar text-3xl text-emerald-600"></i>
-                </div>
-                <h3 class="text-premium-label text-slate-800 group-hover:text-emerald-600 transition-colors">Salary & Payroll</h3>
-            </a>
-
+   
             <!-- Payment Management -->
-            <a href="managePayments.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
-                <div class="action-icon w-16 h-16 bg-indigo-50 border-2 border-indigo-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
-                    <i class="fa-solid fa-clock-rotate-left text-3xl text-indigo-600"></i>
-                </div>
-                <h3 class="text-premium-label text-slate-800 group-hover:text-indigo-600 transition-colors">Payment Management</h3>
-            </a>
+       
 
             <!-- Container Ledger -->
             <a href="ledger.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
@@ -275,7 +270,7 @@ $dash_total_profit = $dash_total_revenue - $dash_total_cost - $dash_total_expens
 
     <footer class="py-12 border-t border-slate-100 mt-12">
         <div class="max-w-7xl mx-auto px-6 text-center">
-            <p class="text-[10px] text-slate-400 uppercase tracking-[0.4em] font-black">
+            <p class="text-[10px] text-white uppercase tracking-[0.4em] font-black">
                 CRYSTAL POS &bull; PREMIUM ENTERPRISE EDITION &bull; <?php echo date('Y'); ?>
             </p>
         </div>
