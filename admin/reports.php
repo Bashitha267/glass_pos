@@ -87,20 +87,7 @@ $stmtItems = $pdo->prepare("
 $stmtItems->execute($params);
 $items_data = $stmtItems->fetchAll(PDO::FETCH_ASSOC);
 
-$profit = $total_earnings - $total_expenses - $total_cost;
-
-// NEW 8. Total Payments Received
-$stmtTotalPayments = $pdo->prepare("
-    SELECT SUM(dp.amount) 
-    FROM delivery_payments dp 
-    JOIN delivery_customers dc ON dp.delivery_customer_id = dc.id 
-    JOIN deliveries d ON dc.delivery_id = d.id 
-    WHERE $whereClause
-");
-$stmtTotalPayments->execute($params);
-$total_payments_got = (float)$stmtTotalPayments->fetchColumn();
-
-// NEW 9. Employee Salary Payments
+// NEW 8. Employee Salary Payments
 $empWhere = ["status = 'paid'"];
 $empParams = [];
 if ($start_date) {
@@ -120,6 +107,23 @@ $empWhereClause = implode(" AND ", $empWhere);
 $stmtEmpPay = $pdo->prepare("SELECT SUM(salary_amount) FROM employee_salary_payments WHERE $empWhereClause");
 $stmtEmpPay->execute($empParams);
 $total_emp_payments = (float)$stmtEmpPay->fetchColumn();
+
+// Include container costs in Total Expenses
+$total_expenses += $total_cost;
+
+// Calculate True Profit
+$profit = $total_earnings - $total_expenses - $total_emp_payments;
+
+// NEW 9. Total Payments Received
+$stmtTotalPayments = $pdo->prepare("
+    SELECT SUM(dp.amount) 
+    FROM delivery_payments dp 
+    JOIN delivery_customers dc ON dp.delivery_customer_id = dc.id 
+    JOIN deliveries d ON dc.delivery_id = d.id 
+    WHERE $whereClause
+");
+$stmtTotalPayments->execute($params);
+$total_payments_got = (float)$stmtTotalPayments->fetchColumn();
 
 // NEW 10. Bank Account Aggregates
 $stmtBanks = $pdo->prepare("
@@ -246,7 +250,7 @@ $pay_types_data = $stmtPayTypes->fetchAll(PDO::FETCH_ASSOC);
     <main class="max-w-[1600px] mx-auto px-6">
 
         <!-- Filters (Synced with managePayments style) -->
-        <div class="glass-card bg-slate-900/90 p-6 mb-8 border-slate-700 shadow-2xl">
+        <div class="bg-slate-900/90 backdrop-blur-xl border border-slate-700 rounded-[28px] p-6 mb-8 shadow-2xl">
             <form id="filterForm" method="GET" class="grid grid-cols-1 md:grid-cols-12 gap-5 items-end">
                 <div class="md:col-span-3">
                     <label class="text-[10px] uppercase font-black text-slate-400 mb-2 ml-1 block tracking-widest">Date Range Start</label>

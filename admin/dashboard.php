@@ -23,18 +23,16 @@ $currentMonth = date('m');
 $currentYear = date('Y');
 
 // Total revenue
-$revStmt = $pdo->prepare("SELECT SUM(coalesce(di.sold_qty * di.selling_price, 0)) as total_earnings
-                          FROM delivery_items di 
-                          JOIN delivery_customers dc ON di.delivery_customer_id = dc.id
+$revStmt = $pdo->prepare("SELECT SUM(dc.subtotal - dc.discount) as total_earnings
+                          FROM delivery_customers dc
                           JOIN deliveries d ON dc.delivery_id = d.id 
                           WHERE MONTH(d.delivery_date) = ? AND YEAR(d.delivery_date) = ?");
 $revStmt->execute([$currentMonth, $currentYear]);
 $dash_total_revenue = (float)$revStmt->fetchColumn();
 
 // Total cost (COGS)
-$costStmt = $pdo->prepare("SELECT SUM(coalesce(di.qty * ci.per_item_cost, 0)) 
+$costStmt = $pdo->prepare("SELECT SUM(di.qty * di.cost_price)
                             FROM delivery_items di
-                            JOIN container_items ci ON di.container_item_id = ci.id 
                             JOIN delivery_customers dc ON di.delivery_customer_id = dc.id 
                             JOIN deliveries d ON dc.delivery_id = d.id 
                             WHERE MONTH(d.delivery_date) = ? AND YEAR(d.delivery_date) = ?");
