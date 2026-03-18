@@ -36,40 +36,63 @@ $where = [];
 $params = [];
 
 if ($search) {
-    $where[] = "(c.container_number LIKE ? OR b.name LIKE ? OR u.username LIKE ?)";
+    $where[] = "(c_ref_id LIKE ? OR b_brand_name LIKE ? OR actor_name LIKE ? OR text_desc LIKE ?)";
+    $params[] = "%$search%";
     $params[] = "%$search%";
     $params[] = "%$search%";
     $params[] = "%$search%";
 }
-if ($start_date) { $where[] = "l.changed_at >= ?"; $params[] = $start_date . ' 00:00:00'; }
-if ($end_date) { $where[] = "l.changed_at <= ?"; $params[] = $end_date . ' 23:59:59'; }
+if ($start_date) { $where[] = "unix_timestamp >= ?"; $params[] = $start_date . ' 00:00:00'; }
+if ($end_date) { $where[] = "unix_timestamp <= ?"; $params[] = $end_date . ' 23:59:59'; }
 
 $whereClause = $where ? "WHERE " . implode(" AND ", $where) : "";
 
-// Count total for pagination
-$countQuery = "SELECT COUNT(DISTINCT l.id) FROM container_ledger l
-               JOIN users u ON l.changed_by = u.id
-               JOIN containers c ON l.container_id = c.id
-               LEFT JOIN container_items ci ON c.id = ci.container_id
-               LEFT JOIN brands b ON ci.brand_id = b.id
-               $whereClause";
-$countStmt = $pdo->prepare($countQuery);
-$countStmt->execute($params);
-$total_records = $countStmt->fetchColumn();
-$total_pages = ceil($total_records / $limit);
-
-// Fetch Ledger Data with User, Container, and Brand info
-$query = "
-    SELECT l.*, u.username as actor, c.container_number, b.name as brand_name
+// Unified Query for Container and Delivery Ledgers
+$unifiedQuery = "
+    SELECT 
+        l.id as ledger_id,
+        'Container ' as log_type,
+        l.action_type,
+        l.field_name as text_desc,
+        l.old_value,
+        l.new_value,
+        l.changed_at as unix_timestamp,
+        u.username as actor_name,
+        c.container_number as c_ref_id,
+        b.name as b_brand_name
     FROM container_ledger l
     JOIN users u ON l.changed_by = u.id
     JOIN containers c ON l.container_id = c.id
     LEFT JOIN (SELECT container_id, MIN(brand_id) as brand_id FROM container_items GROUP BY container_id) ci ON c.id = ci.container_id
     LEFT JOIN brands b ON ci.brand_id = b.id
-    $whereClause
-    ORDER BY l.changed_at DESC
-    LIMIT $limit OFFSET $offset
+
+    UNION ALL
+
+    SELECT 
+        l.id as ledger_id,
+        'Delivery ' as log_type,
+        l.action_type,
+        l.notes as text_desc,
+        NULL as old_value,
+        NULL as new_value,
+        l.performed_at as unix_timestamp,
+        u.full_name as actor_name,
+        CONCAT('DEL-', LPAD(d.id, 4, '0')) as c_ref_id,
+        NULL as b_brand_name
+    FROM delivery_ledger l
+    JOIN users u ON l.performed_by = u.id
+    JOIN deliveries d ON l.delivery_id = d.id
 ";
+
+// Count total for pagination
+$countQuery = "SELECT COUNT(*) FROM ($unifiedQuery) as U $whereClause";
+$countStmt = $pdo->prepare($countQuery);
+$countStmt->execute($params);
+$total_records = $countStmt->fetchColumn();
+$total_pages = max(1, ceil($total_records / $limit));
+
+// Fetch Ledger Data
+$query = "SELECT * FROM ($unifiedQuery) as U $whereClause ORDER BY unix_timestamp DESC LIMIT $limit OFFSET $offset";
 $stmt = $pdo->prepare($query);
 $stmt->execute($params);
 $ledger = $stmt->fetchAll();
@@ -218,7 +241,7 @@ $ledger = $stmt->fetchAll();
                     <thead>
                         <tr class="table-header">
                             <th class="px-6 py-5 font-bold">Timestamp</th>
-                            <th class="px-6 py-5 font-bold">Container</th>
+                            <th class="px-6 py-5 font-bold">Action id</th>
                             <th class="px-6 py-5 font-bold text-center">Action</th>
                             <th class="px-6 py-5 font-bold">Actor</th>
                             <th class="px-6 py-5 font-bold">Description</th>
@@ -234,31 +257,35 @@ $ledger = $stmt->fetchAll();
                         <?php foreach ($ledger as $entry): ?>
                         <tr class="odd:bg-gray-50/40 even:bg-white/40 hover:bg-cyan-500/5 transition-colors">
                             <td class="px-6 py-4 whitespace-nowrap">
-                                <div class="text-[12px] font-bold text-slate-800"><?php echo date('Y-m-d', strtotime($entry['changed_at'])); ?></div>
-                                <div class="text-[10px] text-slate-500 font-medium"><?php echo date('h:i A', strtotime($entry['changed_at'])); ?></div>
+                                <div class="text-[12px] font-bold text-slate-800"><?php echo date('Y-m-d', strtotime($entry['unix_timestamp'])); ?></div>
+                                <div class="text-[10px] text-slate-500 font-medium"><?php echo date('h:i A', strtotime($entry['unix_timestamp'])); ?></div>
                             </td>
                             <td class="px-6 py-4 font-bold text-cyan-600 text-sm">
-                                <?php echo htmlspecialchars($entry['container_number']); ?>
+                                <?php echo htmlspecialchars($entry['c_ref_id']); ?>
+                                <span class="text-[9px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-600 block w-fit mt-1 uppercase"><?php echo $entry['log_type']; ?></span>
                             </td>
                             <td class="px-6 py-4 text-center">
                                 <?php 
                                     $class = "bg-slate-100 text-slate-600";
                                     switch($entry['action_type']) {
                                         case 'CREATED': $class = "bg-emerald-100 text-emerald-700"; break;
-                                        case 'UPDATED': $class = "bg-cyan-100 text-cyan-700"; break;
+                                        case 'UPDATED': 
+                                        case 'EDITED': $class = "bg-cyan-100 text-cyan-700"; break;
                                         case 'PAYMENT': $class = "bg-amber-100 text-amber-700"; break;
                                         case 'EXPENSE': $class = "bg-rose-100 text-rose-700"; break;
                                         case 'UPDATE': $class = "bg-blue-100 text-blue-700"; break;
+                                        case 'PAYMENT_DELETED': $class = "bg-red-100 text-red-700"; break;
+                                        case 'DELETED': $class = "bg-rose-100 text-rose-700"; break;
                                     }
                                 ?>
                                 <span class="px-3 py-1 rounded-lg text-[10px] font-extrabold uppercase tracking-tight <?php echo $class; ?>">
                                     <?php echo htmlspecialchars($entry['action_type']); ?>
                                 </span>
                             </td>
-                            <td class="px-6 py-4 text-sm font-semibold text-slate-700"><?php echo htmlspecialchars($entry['actor']); ?></td>
-                            <td class="px-6 py-4 text-xs text-slate-500 leading-tight italic"><?php echo htmlspecialchars($entry['field_name'] ?? '-'); ?></td>
+                            <td class="px-6 py-4 text-sm font-semibold text-slate-700"><?php echo htmlspecialchars($entry['actor_name']); ?></td>
+                            <td class="px-6 py-4 text-xs text-slate-500 leading-tight italic"><?php echo htmlspecialchars($entry['text_desc'] ?? '-'); ?></td>
                             <td class="px-6 py-4 text-[11px] text-center whitespace-nowrap">
-                                <?php if ($entry['old_value'] !== null && $entry['action_type'] == 'UPDATE'): ?>
+                                <?php if ($entry['old_value'] !== null && in_array($entry['action_type'], ['UPDATE', 'EDITED'])): ?>
                                     <span class="text-rose-500 line-through opacity-60"><?php echo htmlspecialchars($entry['old_value']); ?></span>
                                     <i class="fa-solid fa-arrow-right mx-2 text-slate-300"></i>
                                     <span class="text-emerald-600 font-bold"><?php echo htmlspecialchars($entry['new_value']); ?></span>

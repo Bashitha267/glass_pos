@@ -137,7 +137,6 @@ CREATE TABLE IF NOT EXISTS delivery_items (
     cost_price DECIMAL(15, 2) NOT NULL,
     selling_price DECIMAL(15, 2) NOT NULL,
     total DECIMAL(15, 2) NOT NULL,
-    bill_image VARCHAR(255) DEFAULT NULL,
     FOREIGN KEY (delivery_customer_id) REFERENCES delivery_customers(id) ON DELETE CASCADE,
     FOREIGN KEY (container_item_id) REFERENCES container_items(id)
 );
@@ -208,5 +207,32 @@ CREATE TABLE IF NOT EXISTS delivery_payments (
     FOREIGN KEY (delivery_customer_id) REFERENCES delivery_customers(id) ON DELETE CASCADE,
     FOREIGN KEY (bank_id) REFERENCES banks(id) ON DELETE SET NULL,
     FOREIGN KEY (cheque_customer_id) REFERENCES customers(id) ON DELETE SET NULL,
+    FOREIGN KEY (recorded_by) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS employee_salary_settings (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL UNIQUE,
+    monthly_salary DECIMAL(15,2) NOT NULL DEFAULT 0.00,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS employee_salary_payments (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    salary_month TINYINT NOT NULL,
+    salary_year SMALLINT NOT NULL,
+    deliveries_count INT NOT NULL DEFAULT 0,
+    salary_amount DECIMAL(15,2) NOT NULL,
+    payment_date DATE DEFAULT NULL,
+    status ENUM('paid','nonpaid') NOT NULL DEFAULT 'nonpaid',
+    paid_at TIMESTAMP NULL DEFAULT NULL,
+    recorded_by INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_employee_salary_month (user_id, salary_month, salary_year),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (recorded_by) REFERENCES users(id)
 );

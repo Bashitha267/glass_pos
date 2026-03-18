@@ -16,6 +16,44 @@ if (isset($_GET['logout'])) {
     header('Location: ../login.php');
     exit;
 }
+
+require_once '../config.php';
+
+$currentMonth = date('m');
+$currentYear = date('Y');
+
+// Total revenue
+$revStmt = $pdo->prepare("SELECT SUM(coalesce(di.sold_qty * di.selling_price, 0)) as total_earnings
+                          FROM delivery_items di 
+                          JOIN delivery_customers dc ON di.delivery_customer_id = dc.id
+                          JOIN deliveries d ON dc.delivery_id = d.id 
+                          WHERE MONTH(d.delivery_date) = ? AND YEAR(d.delivery_date) = ?");
+$revStmt->execute([$currentMonth, $currentYear]);
+$dash_total_revenue = (float)$revStmt->fetchColumn();
+
+// Total cost (COGS)
+$costStmt = $pdo->prepare("SELECT SUM(coalesce(di.qty * ci.per_item_cost, 0)) 
+                            FROM delivery_items di
+                            JOIN container_items ci ON di.container_item_id = ci.id 
+                            JOIN delivery_customers dc ON di.delivery_customer_id = dc.id 
+                            JOIN deliveries d ON dc.delivery_id = d.id 
+                            WHERE MONTH(d.delivery_date) = ? AND YEAR(d.delivery_date) = ?");
+$costStmt->execute([$currentMonth, $currentYear]);
+$dash_total_cost = (float)$costStmt->fetchColumn();
+
+// Total operational expenses
+$expStmt = $pdo->prepare("SELECT SUM(amount) FROM delivery_expenses de 
+                          JOIN deliveries d ON de.delivery_id = d.id 
+                          WHERE MONTH(d.delivery_date) = ? AND YEAR(d.delivery_date) = ?");
+$expStmt->execute([$currentMonth, $currentYear]);
+$dash_total_expenses = (float)$expStmt->fetchColumn();
+
+// Employee payments
+$empStmt = $pdo->prepare("SELECT SUM(salary_amount) FROM employee_salary_payments WHERE status = 'paid' AND salary_month = ? AND salary_year = ?");
+$empStmt->execute([$currentMonth, $currentYear]);
+$dash_total_emp_payments = (float)$empStmt->fetchColumn();
+
+$dash_total_profit = $dash_total_revenue - $dash_total_cost - $dash_total_expenses - $dash_total_emp_payments;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -120,13 +158,23 @@ if (isset($_GET['logout'])) {
 
             <div class="flex items-center space-x-8">
                 <div class="hidden md:flex items-center space-x-6">
-                    <div class="text-right">
-                        <span class="text-premium-label">System Time</span>
+                    <div class="text-right hidden lg:block">
+                        <span class="text-premium-label">Monthly Revenue</span>
+                        <p class="text-md font-black text-emerald-600 tracking-tighter mt-0.5">LKR <?php echo number_format($dash_total_revenue, 2); ?></p>
+                    </div>
+                    <div class="w-px h-8 bg-slate-200 hidden lg:block"></div>
+                    <div class="text-right hidden lg:block">
+                        <span class="text-premium-label">Monthly Profit</span>
+                        <p class="text-md font-black text-indigo-600 tracking-tighter mt-0.5">LKR <?php echo number_format($dash_total_profit, 2); ?></p>
+                    </div>
+                    <div class="w-px h-8 bg-slate-200 hidden lg:block"></div>
+                    <div class="text-right flex-col justify-center">
+                        <span class="text-premium-label block">System Time</span>
                         <p id="current-time" class="text-sm font-black text-slate-800 tracking-widest mt-0.5"></p>
                     </div>
                     <div class="w-px h-8 bg-slate-200"></div>
-                    <div class="text-right">
-                        <span class="text-premium-label">Operator</span>
+                    <div class="text-right flex-col justify-center">
+                        <span class="text-premium-label block">Operator</span>
                         <p class="text-sm font-black text-slate-800 mt-0.5"><?php echo htmlspecialchars($username); ?></p>
                     </div>
                 </div>
@@ -183,6 +231,14 @@ if (isset($_GET['logout'])) {
                 <h3 class="text-premium-label text-slate-800 group-hover:text-purple-600 transition-colors">Staff Management</h3>
             </a>
 
+            <!-- Salary -->
+            <a href="salary.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
+                <div class="action-icon w-16 h-16 bg-emerald-50 border-2 border-emerald-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
+                    <i class="fa-solid fa-money-check-dollar text-3xl text-emerald-600"></i>
+                </div>
+                <h3 class="text-premium-label text-slate-800 group-hover:text-emerald-600 transition-colors">Salary & Payroll</h3>
+            </a>
+
             <!-- Payment Management -->
             <a href="managePayments.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
                 <div class="action-icon w-16 h-16 bg-indigo-50 border-2 border-indigo-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
@@ -199,13 +255,13 @@ if (isset($_GET['logout'])) {
                 <h3 class="text-premium-label text-slate-800 group-hover:text-slate-900 transition-colors">Audit Ledger</h3>
             </a>
 
-            <!-- Sales History -->
-            <div class="glass-card group p-8 flex flex-col items-center justify-center text-center cursor-pointer">
+            <!-- Payment History -->
+            <a href="finance.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
                 <div class="action-icon w-16 h-16 bg-emerald-50 border-2 border-emerald-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
                     <i class="fa-solid fa-receipt text-3xl text-emerald-600"></i>
                 </div>
-                <h3 class="text-premium-label text-slate-800 group-hover:text-emerald-600 transition-colors">Finance Logs</h3>
-            </div>
+                <h3 class="text-premium-label text-slate-800 group-hover:text-emerald-600 transition-colors">Payment History</h3>
+            </a>
 
            
 

@@ -48,10 +48,18 @@ if ($action == 'search_brand_stock') {
 if ($action == 'create_employee') {
     $name = $_POST['name'];
     $contact = $_POST['contact'];
+    $monthly_salary = (float)($_POST['salary'] ?? 0);
     // No longer requiring username/password for staff as only admins have system access.
     $stmt = $pdo->prepare("INSERT INTO users (full_name, contact_number, role) VALUES (?, ?, 'employee')");
     $stmt->execute([$name, $contact]);
-    echo json_encode(['success' => true, 'id' => $pdo->lastInsertId(), 'name' => $name, 'pic' => null]);
+    $new_id = $pdo->lastInsertId();
+    
+    if ($monthly_salary > 0) {
+        $stmtSal = $pdo->prepare("INSERT INTO employee_salary_settings (user_id, monthly_salary) VALUES (?, ?)");
+        $stmtSal->execute([$new_id, $monthly_salary]);
+    }
+    
+    echo json_encode(['success' => true, 'id' => $new_id, 'name' => $name, 'pic' => null]);
     exit;
 }
 
@@ -136,17 +144,26 @@ if ($action == 'save_delivery') {
                 $dc_id = $pdo->lastInsertId();
             }
 
-            // Handle Bill Image
-            $bill = null;
-            $bill_key = "bill_" . $index;
-            if (isset($_FILES[$bill_key]) && $_FILES[$bill_key]['error'] === UPLOAD_ERR_OK) {
-                $bill = time() . '_' . $index . '_route_bill_' . $_FILES[$bill_key]['name'];
-                if (!is_dir('../uploads/bills')) mkdir('../uploads/bills', 0777, true);
-                if (!move_uploaded_file($_FILES[$bill_key]['tmp_name'], '../uploads/bills/' . $bill)) {
-                    throw new Exception("Failed to upload bill for client " . ($index + 1));
+            // Sync Accumulated Proofs (Both New & Existing)
+            if ($dc_id && isset($c['existing_bills'])) {
+                $kept_bills = is_array($c['existing_bills']) ? $c['existing_bills'] : [];
+                
+                // 1. Delete ones removed by user
+                $delQ = "DELETE FROM delivery_proof_photos WHERE delivery_customer_id = ?";
+                if (!empty($kept_bills)) {
+                    $delQ .= " AND photo_path NOT IN (" . implode(',', array_fill(0, count($kept_bills), '?')) . ")";
                 }
-            } elseif (!empty($c['existing_bill'])) {
-                $bill = $c['existing_bill'];
+                $pdo->prepare($delQ)->execute(array_merge([$dc_id], $kept_bills));
+                
+                // 2. Insert any newly uploaded ones not yet in DB for this specific dc_id
+                $stmtCheck = $pdo->prepare("SELECT id FROM delivery_proof_photos WHERE delivery_customer_id = ? AND photo_path = ?");
+                $stmtInsert = $pdo->prepare("INSERT INTO delivery_proof_photos (delivery_customer_id, photo_path, uploaded_by) VALUES (?, ?, ?)");
+                foreach($kept_bills as $billFile) {
+                    $stmtCheck->execute([$dc_id, $billFile]);
+                    if(!$stmtCheck->fetch()) {
+                        $stmtInsert->execute([$dc_id, $billFile, $user_id]);
+                    }
+                }
             }
 
             foreach ($c['items'] as $item) {
@@ -163,8 +180,8 @@ if ($action == 'save_delivery') {
                     throw new Exception("Insufficient stock for product. Please check availability.");
                 }
 
-                $pdo->prepare("INSERT INTO delivery_items (delivery_customer_id, container_item_id, qty, damaged_qty, cost_price, selling_price, total, bill_image) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-                    ->execute([$dc_id, $item['item_id'], $qty, $dmg, (float)$item['cost_price'], (float)$item['selling_price'], $line_total, $bill]);
+                $pdo->prepare("INSERT INTO delivery_items (delivery_customer_id, container_item_id, qty, damaged_qty, cost_price, selling_price, total) VALUES (?, ?, ?, ?, ?, ?, ?)")
+                    ->execute([$dc_id, $item['item_id'], $qty, $dmg, (float)$item['cost_price'], (float)$item['selling_price'], $line_total]);
             }
             $pdo->prepare("UPDATE delivery_customers SET subtotal = ?, discount = ? WHERE id = ?")->execute([$customer_subtotal, $customer_discount, $dc_id]);
             $grand_total_sales += $customer_subtotal;
@@ -210,12 +227,36 @@ if ($action == 'view_delivery') {
             $cr['payments'] = $payments->fetchAll(PDO::FETCH_ASSOC);
             $cr['total_paid'] = array_sum(array_column($cr['payments'], 'amount'));
 
-            $cr['bill_image'] = !empty($cr['items']) ? $cr['items'][0]['bill_image'] : null;
+            $stmtPhotos = $pdo->prepare("SELECT photo_path FROM delivery_proof_photos WHERE delivery_customer_id = ?");
+            $stmtPhotos->execute([$cr['id']]);
+            $cr['proof_photos'] = $stmtPhotos->fetchAll(PDO::FETCH_COLUMN);
         }
         unset($cr);
 
         $delivery['customers'] = $custRows;
         echo json_encode(['success' => true, 'data' => $delivery]);
+    } catch (Exception $e) {
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    }
+    exit;
+}
+
+if ($action == 'upload_proof_instant') {
+    try {
+        if (!is_dir('../uploads/bills')) mkdir('../uploads/bills', 0777, true);
+        $filenames = [];
+        if (isset($_FILES['instant_bills'])) {
+            $count = count($_FILES['instant_bills']['name']);
+            for ($i = 0; $i < $count; $i++) {
+                if ($_FILES['instant_bills']['error'][$i] === UPLOAD_ERR_OK) {
+                    $filename = time() . '_' . rand(1000, 9999) . '_proof_' . preg_replace("/[^a-zA-Z0-9.\-]/", "", $_FILES['instant_bills']['name'][$i]);
+                    if (move_uploaded_file($_FILES['instant_bills']['tmp_name'][$i], '../uploads/bills/' . $filename)) {
+                        $filenames[] = $filename;
+                    }
+                }
+            }
+        }
+        echo json_encode(['success' => true, 'filenames' => $filenames]);
     } catch (Exception $e) {
         echo json_encode(['success' => false, 'message' => $e->getMessage()]);
     }
@@ -834,6 +875,10 @@ $deliveries = $stmt->fetchAll();
                     <label class="text-[10px] uppercase font-black text-slate-500 tracking-widest ml-1">Contact Dial</label>
                     <input type="text" name="contact" required class="input-glass w-full h-[52px] font-bold" placeholder="07XXXXXXXX">
                 </div>
+                <div class="space-y-2">
+                    <label class="text-[10px] uppercase font-black text-slate-500 tracking-widest ml-1">Monthly Salary (Optional LKR)</label>
+                    <input type="number" min="0" step="0.01" name="salary" class="input-glass w-full h-[52px] font-bold" placeholder="0.00">
+                </div>
                 <div class="pt-2">
                     <button type="submit" class="w-full bg-indigo-600 hover:bg-black text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest shadow-2xl shadow-indigo-600/30 transition-all active:scale-95">
                         Enroll & Assign to Delivery
@@ -940,23 +985,10 @@ $deliveries = $stmt->fetchAll();
                             selectCustomer(blockId, c.customer_id, c.name, c.contact_number);
                             
                             const block = document.getElementById(`cust-${blockId}`);
-                            if (c.bill_image) {
-                                block.dataset.existingBill = c.bill_image;
-                                document.getElementById(`bill-label-${blockId}`).innerHTML = `
-                                    <div class="flex items-center gap-2 animate-[scaleIn_0.2s_ease]">
-                                        <button type="button" onclick="document.getElementById('bill-input-${blockId}').click()" class="h-[36px] px-4 rounded-xl bg-indigo-600 text-white hover:bg-black transition-all flex items-center shadow-lg shadow-indigo-600/20 group">
-                                            <i class="fa-solid fa-image mr-2 text-xs"></i>
-                                            <span class="text-[9px] font-black uppercase tracking-widest">${c.bill_image.length > 15 ? c.bill_image.substring(0, 12) + '...' : c.bill_image}</span>
-                                        </button>
-                                        <div class="flex gap-1">
-                                            <a href="../uploads/bills/${c.bill_image}" target="_blank" class="w-[36px] h-[36px] rounded-xl bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center border border-indigo-100 shadow-sm group" title="View Full Bill Image">
-                                                <i class="fa-solid fa-expand group-hover:scale-110 transition-transform text-xs"></i>
-                                            </a>
-                                            <button type="button" onclick="removeStoredBill('${blockId}')" class="w-[36px] h-[36px] rounded-xl bg-rose-50 text-rose-500 hover:bg-rose-600 hover:text-white transition-all flex items-center justify-center border border-rose-100 shadow-sm group" title="Remove Stored Bill">
-                                                <i class="fa-solid fa-xmark group-hover:scale-110 transition-transform text-sm"></i>
-                                            </button>
-                                        </div>
-                                    </div>`;
+                            
+                            if (c.proof_photos && c.proof_photos.length > 0) {
+                                block.dataset.existingBills = JSON.stringify(c.proof_photos);
+                                renderExistingBills(blockId);
                             }
                             
                             // Clear the auto-added empty row
@@ -1160,7 +1192,7 @@ $deliveries = $stmt->fetchAll();
                         </div>
                         
                         <div class="flex items-center gap-2 flex-shrink-0 justify-end w-full md:w-auto">
-                             <input type="file" class="hidden customer-bill-input" id="bill-input-${id}" onchange="handleBillSelect(this, '${id}')">
+                             <input type="file" multiple class="hidden customer-bill-input" id="bill-input-${id}" onchange="handleBillSelect(this, '${id}')">
                              
                              <div id="bill-label-${id}" class="flex items-center">
                                  <button type="button" onclick="document.getElementById('bill-input-${id}').click()" title="Attach Bill" class="h-[46px] px-4 md:px-5 rounded-xl md:rounded-2xl bg-slate-900 text-white hover:bg-black transition-all flex items-center shadow-lg shadow-slate-900/10 group">
@@ -1176,7 +1208,18 @@ $deliveries = $stmt->fetchAll();
                     </div>
                     <div class="hidden customer-results absolute w-full left-0 top-[110px] md:top-[80px] z-30 bg-white/80 backdrop-blur-xl border border-white/40 rounded-2xl shadow-2xl p-2 max-w-md mx-6"></div>
                     
-                    <div class="selected-customer-info mb-6 hidden bg-emerald-500/10 p-4 rounded-xl md:rounded-2xl border border-emerald-500/20 text-emerald-700 text-sm font-bold"></div>
+                    <div class="selected-customer-info mb-6 hidden">
+                        <div class="bg-emerald-500/10 p-3.5 text-emerald-700 text-sm font-bold flex justify-between items-center border border-emerald-500/20 rounded-xl mb-3 shadow-inner">
+                            <span class="client-name-display"><i class="fa-solid fa-user-check mr-2"></i> Client Active: </span>
+                        </div>
+                        <div class="flex flex-wrap gap-3 items-center">
+                            <div class="existing-proofs flex flex-wrap gap-3 empty:hidden"></div>
+                            <div class="new-proofs flex flex-wrap gap-3 empty:hidden"></div>
+                            <button type="button" onclick="document.getElementById('bill-input-${id}').click()" class="h-[60px] w-[60px] rounded-2xl border-2 border-dashed border-slate-300 flex items-center justify-center text-slate-400 hover:border-emerald-500 hover:text-emerald-500 hover:bg-emerald-50 transition-all group" title="Add More Proofs">
+                                <i class="fa-solid fa-plus text-lg group-hover:scale-110 transition-transform"></i>
+                            </button>
+                        </div>
+                    </div>
                     
                     <div class="space-y-3">
                         <div class="flex items-center justify-between mb-2">
@@ -1268,7 +1311,7 @@ $deliveries = $stmt->fetchAll();
             const block = document.getElementById(`cust-${blockId}`);
             block.dataset.customerId = id;
             const info = block.querySelector('.selected-customer-info');
-            info.innerHTML = `<i class="fa-solid fa-check-circle mr-2"></i> Client Active: ${name} (${contact})`;
+            info.querySelector('.client-name-display').innerHTML = `<i class="fa-solid fa-user-check mr-2"></i> ${name} (${contact})`;
             info.classList.remove('hidden');
             block.querySelector('.customer-results').classList.add('hidden');
             block.querySelector('.cust-search').value = name;
@@ -1359,43 +1402,75 @@ $deliveries = $stmt->fetchAll();
         }
 
         function handleBillSelect(input, id) {
-            const lbl = document.getElementById(`bill-label-${id}`);
-            if (input.files && input.files[0]) {
-                const url = URL.createObjectURL(input.files[0]);
-                lbl.innerHTML = `
-                    <div class="flex items-center gap-2 animate-[scaleIn_0.2s_ease]">
-                        <button type="button" onclick="document.getElementById('bill-input-${id}').click()" class="h-[46px] px-5 rounded-2xl bg-emerald-500 text-white hover:bg-emerald-600 transition-all flex items-center shadow-lg shadow-emerald-500/20 group">
-                            <i class="fa-solid fa-circle-check mr-2"></i>
-                            <span class="text-[10px] font-black uppercase tracking-widest">Bill Attached</span>
-                        </button>
-                        <div class="flex gap-1">
-                            <a href="${url}" target="_blank" class="w-[46px] h-[46px] rounded-2xl bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center border border-indigo-100 shadow-sm group" title="Preview Bill">
-                                <i class="fa-solid fa-eye group-hover:scale-110 transition-transform"></i>
-                            </a>
-                            <button type="button" onclick="removeNewBill('${id}')" class="w-[46px] h-[46px] rounded-2xl bg-rose-50 text-rose-500 hover:bg-rose-600 hover:text-white transition-all flex items-center justify-center border border-rose-100 shadow-sm group" title="Remove Bill">
-                                <i class="fa-solid fa-xmark group-hover:scale-110 transition-transform text-lg"></i>
-                            </button>
-                        </div>
-                    </div>`;
+            if (!input.files || input.files.length === 0) return;
+            
+            const addBtn = input.nextElementSibling || document.getElementById(`cust-${id}`).querySelector('.fa-plus').parentElement;
+            const origHTML = addBtn.innerHTML;
+            addBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin text-lg text-emerald-500"></i>';
+            addBtn.disabled = true;
+            
+            const formData = new FormData();
+            formData.append('action', 'upload_proof_instant');
+            for(let i=0; i<input.files.length; i++) {
+                formData.append('instant_bills[]', input.files[i]);
             }
+            
+            fetch('nwdelivery.php', { method: 'POST', body: formData })
+                .then(r => r.json())
+                .then(res => {
+                    addBtn.innerHTML = origHTML;
+                    addBtn.disabled = false;
+                    input.value = '';
+                    
+                    if(res.success && res.filenames.length > 0) {
+                        const block = document.getElementById(`cust-${id}`);
+                        let existing = block.dataset.existingBills ? JSON.parse(block.dataset.existingBills) : [];
+                        existing = existing.concat(res.filenames);
+                        block.dataset.existingBills = JSON.stringify(existing);
+                        renderExistingBills(id);
+                        isDirty = true;
+                    } else if (!res.success) {
+                        alert(res.message || "Failed to upload proofs.");
+                    }
+                })
+                .catch(() => {
+                    addBtn.innerHTML = origHTML;
+                    addBtn.disabled = false;
+                    alert("Upload request failed.");
+                });
         }
 
-        function removeNewBill(id) {
-            if(!confirm("Remove newly attached bill image?")) return;
-            const input = document.getElementById(`bill-input-${id}`);
-            input.value = '';
-            resetBillLabel(id);
-            isDirty = true;
-        }
-
-        function removeStoredBill(id) {
-            if(!confirm("Remove stored bill image from this customer?")) return;
+        function removeStoredBill(id, idx) {
+            if(!confirm("Remove this specific bill image from the customer?")) return;
             const block = document.getElementById(`cust-${id}`);
-            block.dataset.existingBill = ''; // Clear the dataset so it isn't sent back to the server
-            // Clear the file input just in case
-            document.getElementById(`bill-input-${id}`).value = '';
-            resetBillLabel(id);
+            let existing = block.dataset.existingBills ? JSON.parse(block.dataset.existingBills) : [];
+            existing.splice(idx, 1);
+            block.dataset.existingBills = JSON.stringify(existing);
+            renderExistingBills(id);
             isDirty = true;
+        }
+
+        function renderExistingBills(id) {
+            const block = document.getElementById(`cust-${id}`);
+            const container = block.querySelector('.existing-proofs');
+            let existing = block.dataset.existingBills ? JSON.parse(block.dataset.existingBills) : [];
+            
+            let html = '';
+            existing.forEach((photo, i) => {
+                html += `
+                    <div class="h-[60px] w-[60px] rounded-2xl border-2 border-indigo-200 overflow-hidden shadow-sm group relative animate-[scaleIn_0.2s_ease]">
+                        <a href="../uploads/bills/${photo}" target="_blank" class="block w-full h-full">
+                            <img src="../uploads/bills/${photo}" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300" alt="Bill">
+                            <div class="absolute inset-0 bg-indigo-900/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                <i class="fa-solid fa-expand text-white text-sm"></i>
+                            </div>
+                        </a>
+                        <button type="button" onclick="removeStoredBill('${id}', ${i})" class="absolute -top-1 -right-1 w-5 h-5 bg-rose-500 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-rose-600 transition-colors transform scale-0 group-hover:scale-100" title="Remove Bill">
+                            <i class="fa-solid fa-xmark text-[10px]"></i>
+                        </button>
+                    </div>`;
+            });
+            container.innerHTML = html;
         }
 
         function resetBillLabel(id) {
@@ -1476,14 +1551,10 @@ $deliveries = $stmt->fetchAll();
                     if(iid && q && p) items.push({item_id: iid, qty: q, selling_price: p, cost_price: cp, damaged_qty: dmg, discount: disc});
                 });
                 
-                const billInput = b.querySelector('.customer-bill-input');
-                const existingBill = b.dataset.existingBill;
+                const existingBills = b.dataset.existingBills ? JSON.parse(b.dataset.existingBills) : [];
                 
                 if(cid && items.length) {
-                    custs.push({dc_id: dcId, customer_id: cid, items, existing_bill: existingBill});
-                    if(billInput && billInput.files[0]) {
-                        formData.append(`bill_${index}`, billInput.files[0]);
-                    }
+                    custs.push({dc_id: dcId, customer_id: cid, items, existing_bills: existingBills});
                 }
             });
 

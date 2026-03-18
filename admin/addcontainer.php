@@ -396,33 +396,33 @@ $containers = $stmt->fetchAll();
     <main class="w-full px-6 py-8 sm:py-10">
         <!-- Filters Bar -->
         <div class="glass-card bg-slate-800/80 p-4 sm:p-6 mb-8 border-slate-700">
-            <form method="GET" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-4 items-end">
+            <form id="filter-form" method="GET" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-4 items-end" onsubmit="event.preventDefault();">
                 <div class="sm:col-span-2 lg:col-span-2 relative">
                     <label class="text-[10px] uppercase font-black text-slate-400 mb-1 block tracking-widest">Search</label>
                     <div class="relative">
                         <i class="fa-solid fa-search absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"></i>
-                        <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="ID or Brand..." class="input-glass w-full pl-12 bg-slate-900/40 border-slate-700 text-white placeholder:text-slate-500 focus:ring-2 focus:ring-cyan-500 auto-search">
+                        <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="ID or Brand..." class="px-3 py-2 rounded-xl outline-none transition-all border focus:border-cyan-500 w-full pl-10 bg-slate-900/40 border-slate-700 text-white placeholder:text-slate-500 focus:ring-2 focus:ring-cyan-500/50 auto-search">
                     </div>
                 </div>
                 <div>
                     <label class="text-[10px] uppercase font-black text-slate-400 mb-1 block tracking-widest">Start Date</label>
-                    <input type="date" name="start_date" value="<?php echo htmlspecialchars($start_date); ?>" class="input-glass w-full bg-slate-900/40 border-slate-700 text-white" onchange="this.form.submit()">
+                    <input type="date" name="start_date" value="<?php echo htmlspecialchars($start_date); ?>" class="px-3 py-2 rounded-xl outline-none transition-all border focus:border-cyan-500 w-full bg-slate-900/40 border-slate-700 text-white focus:ring-2 focus:ring-cyan-500/50">
                 </div>
                 <div>
                     <label class="text-[10px] uppercase font-black text-slate-400 mb-1 block tracking-widest">End Date</label>
-                    <input type="date" name="end_date" value="<?php echo htmlspecialchars($end_date); ?>" class="input-glass w-full bg-slate-900/40 border-slate-700 text-white" onchange="this.form.submit()">
+                    <input type="date" name="end_date" value="<?php echo htmlspecialchars($end_date); ?>" class="px-3 py-2 rounded-xl outline-none transition-all border focus:border-cyan-500 w-full bg-slate-900/40 border-slate-700 text-white focus:ring-2 focus:ring-cyan-500/50">
                 </div>
                 <div>
                     <label class="text-[10px] uppercase font-black text-slate-400 mb-1 block tracking-widest">Payment Status</label>
-                    <select name="payment_status" class="input-glass w-full bg-slate-900/40 border-slate-700 text-white" onchange="this.form.submit()">
+                    <select name="payment_status" class="px-3 py-2 rounded-xl outline-none transition-all border focus:border-cyan-500 w-full bg-slate-900/40 border-slate-700 text-white focus:ring-2 focus:ring-cyan-500/50">
                         <option value="" class="bg-slate-800">All Status</option>
                         <option value="pending" <?php echo $payment_status === 'pending' ? 'selected' : ''; ?> class="bg-slate-800">Pending</option>
                         <option value="completed" <?php echo $payment_status === 'completed' ? 'selected' : ''; ?> class="bg-slate-800">Completed</option>
                     </select>
                 </div>
-                <div class="flex sm:col-span-2 lg:col-span-1 space-x-2">
+                <div class="flex sm:col-span-2 lg:col-span-1 space-x-2" id="reset-filters-container">
                     <?php if($search || $start_date || $end_date || $payment_status): ?>
-                        <a href="addcontainer.php" class="bg-rose-500/20 text-rose-400 p-2.5 px-4 rounded-xl hover:bg-rose-500/30 transition-all flex items-center h-[42px] w-full lg:w-auto justify-center" title="Reset Filters">
+                        <a href="addcontainer.php" id="reset-filters-btn" class="bg-rose-500/20 text-rose-400 p-2.5 px-4 rounded-xl hover:bg-rose-500/30 transition-all flex items-center h-[42px] w-full lg:w-auto justify-center" title="Reset Filters">
                             <i class="fa-solid fa-rotate-left mr-2"></i>
                             <span class="text-xs font-bold uppercase tracking-wider">Reset</span>
                         </a>
@@ -485,7 +485,7 @@ $containers = $stmt->fetchAll();
 
             <!-- Pagination Support -->
             <?php if ($total_pages > 1): ?>
-            <div class="px-4 sm:px-6 py-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div id="pagination-container" class="px-4 sm:px-6 py-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div class="text-[10px] sm:text-xs text-slate-500 uppercase font-bold tracking-wider">
                     Showing <span class="text-slate-800"><?php echo $offset + 1; ?></span> to <span class="text-slate-800"><?php echo min($offset + $limit, $total_records); ?></span> of <span class="text-slate-800"><?php echo $total_records; ?></span> entries
                 </div>
@@ -640,8 +640,8 @@ $containers = $stmt->fetchAll();
 
                     <div class="flex flex-col sm:flex-row justify-end pt-1 gap-3">
                         <button type="button" onclick="closeModal()" class="sm:hidden order-2 bg-slate-100 text-slate-600 font-bold py-3 px-6 rounded-2xl border border-slate-200">Cancel</button>
-                        <button type="submit" class="order-1 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white font-bold py-3 px-8 sm:px-12 rounded-2xl shadow-xl shadow-cyan-900/10 transition-all active:scale-95 text-sm sm:text-base">
-                            Save Container Record
+                        <button type="button" onclick="closeModal()" class="order-1 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white font-bold py-3 px-8 sm:px-12 rounded-2xl shadow-xl shadow-cyan-900/10 transition-all active:scale-95 text-sm sm:text-base">
+                            Done
                         </button>
                     </div>
                 </form>
@@ -668,14 +668,11 @@ $containers = $stmt->fetchAll();
             const addButtons = document.querySelectorAll('.btn-freq, #add-exp-container, #btn-add-item, #add-pay-container');
             
             if (mode === 'view') {
-                submitBtn.classList.add('hidden');
-                addButtons.forEach(btn => btn.classList.add('hidden'));
                 document.querySelectorAll('#container-form input, #container-form select, #container-form textarea').forEach(input => input.disabled = true);
+                addButtons.forEach(btn => btn.classList.add('hidden'));
             } else {
-                submitBtn.classList.remove('hidden');
-                submitBtn.innerText = mode === 'edit' ? "Update Container Record" : "Save Container Record";
-                addButtons.forEach(btn => btn.classList.remove('hidden'));
                 document.querySelectorAll('#container-form input, #container-form select, #container-form textarea').forEach(input => input.disabled = false);
+                addButtons.forEach(btn => btn.classList.remove('hidden'));
                 
                 if (mode === 'add') {
                     fetch('?action=get_next_number')
@@ -728,6 +725,7 @@ $containers = $stmt->fetchAll();
                 </div>
             `;
             itemsList.insertAdjacentHTML('beforeend', html);
+            document.getElementById('container-form').dispatchEvent(new Event('input', { bubbles: true }));
         }
 
         function addExpenseRow(name = '', amount = '') {
@@ -748,6 +746,7 @@ $containers = $stmt->fetchAll();
             `;
             expensesList.insertAdjacentHTML('beforeend', html);
             calculateTotals();
+            document.getElementById('container-form').dispatchEvent(new Event('input', { bubbles: true }));
         }
 
         function addPaymentRow(data = null) {
@@ -790,6 +789,7 @@ $containers = $stmt->fetchAll();
             const container = document.getElementById('payments-list');
             container.insertAdjacentHTML('beforeend', html);
             calculateTotals();
+            document.getElementById('container-form').dispatchEvent(new Event('input', { bubbles: true }));
         }
 
         function addFreqExpense(name) {
@@ -799,6 +799,7 @@ $containers = $stmt->fetchAll();
         function removeRow(id) {
             document.getElementById(id).remove();
             calculateTotals();
+            document.getElementById('container-form').dispatchEvent(new Event('input', { bubbles: true }));
         }
 
         function suggestBrands(input) {
@@ -834,6 +835,7 @@ $containers = $stmt->fetchAll();
             const input = el.closest('.item-row').querySelector('.brand-input');
             input.value = name;
             el.parentElement.classList.add('hidden');
+            document.getElementById('container-form').dispatchEvent(new Event('input', { bubbles: true }));
         }
 
         // Hide all brand suggestion dropdowns on outside click
@@ -907,8 +909,38 @@ $containers = $stmt->fetchAll();
             }
         }
 
-        function saveContainer(e) {
-            e.preventDefault();
+        function refreshTable() {
+            fetch(window.location.href)
+            .then(r => r.text())
+            .then(html => {
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                const newTbody = doc.querySelector('tbody');
+                if (newTbody) {
+                    document.querySelector('tbody').innerHTML = newTbody.innerHTML;
+                }
+            });
+        }
+
+        let autoSaveTimer;
+        document.getElementById('container-form').addEventListener('input', function() {
+            if (currentMode === 'view') return;
+            clearTimeout(autoSaveTimer);
+            autoSaveTimer = setTimeout(() => {
+                saveContainer(null, true);
+            }, 800);
+        });
+        
+        document.getElementById('container-form').addEventListener('change', function() {
+            if (currentMode === 'view') return;
+            clearTimeout(autoSaveTimer);
+            autoSaveTimer = setTimeout(() => {
+                saveContainer(null, true);
+            }, 800);
+        });
+
+        function saveContainer(e = null, isAutoSave = false) {
+            if (e) e.preventDefault();
 
             // Guard: Prevent overpayment before submission
             let totalExp = parseFloat(document.getElementById('container_cost').value || 0);
@@ -916,7 +948,7 @@ $containers = $stmt->fetchAll();
             let totalPd = 0;
             document.querySelectorAll('.pay-amount').forEach(el => totalPd += parseFloat(el.value || 0));
             if (totalPd > totalExp) {
-                alert(`Error: Total payments (Rs. ${totalPd.toLocaleString()}) exceed total expenses (Rs. ${totalExp.toLocaleString()}). Please adjust before saving.`);
+                if (!isAutoSave) alert(`Error: Total payments (Rs. ${totalPd.toLocaleString()}) exceed total expenses (Rs. ${totalExp.toLocaleString()}). Please adjust before saving.`);
                 return;
             }
 
@@ -963,11 +995,16 @@ $containers = $stmt->fetchAll();
                 .then(r => r.json())
                 .then(data => {
                     if (data.success) {
-                        location.reload();
+                        if (!isAutoSave) {
+                            location.reload();
+                        } else {
+                            refreshTable(); // Update background table implicitly
+                        }
                     } else {
-                        alert("Error: " + data.message);
+                        if (!isAutoSave) alert("Error: " + data.message);
                     }
-                });
+                })
+                .catch(err => console.error("Auto-save error:", err));
         }
 
         function viewContainer(no) {
@@ -1037,22 +1074,74 @@ $containers = $stmt->fetchAll();
             }
         }
 
-        // Auto-search Debounce
-        let searchTimeout;
-        document.querySelector('.auto-search').addEventListener('input', function(e) {
-            clearTimeout(searchTimeout);
-            searchTimeout = setTimeout(() => {
-                this.form.submit();
-            }, 600);
+        // Auto-search AJAX implementation
+        let mainSearchTimeout;
+        const filterForm = document.getElementById('filter-form');
+        
+        function handleAjaxSearch(providedUrl = null) {
+            clearTimeout(mainSearchTimeout);
+            mainSearchTimeout = setTimeout(() => {
+                const url = providedUrl || ('?' + new URLSearchParams(new FormData(filterForm)).toString());
+                
+                // Keep URL updated for copy-pasting/refreshing
+                window.history.replaceState({}, '', url);
+                
+                fetch(url)
+                .then(r => r.text())
+                .then(html => {
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    
+                    // Update main table
+                    const newTbody = doc.querySelector('tbody');
+                    if (newTbody) {
+                        document.querySelector('tbody').innerHTML = newTbody.innerHTML;
+                    }
+                    
+                    // Update Pagination
+                    const oldPagination = document.getElementById('pagination-container');
+                    const newPagination = doc.getElementById('pagination-container');
+                    if (oldPagination && newPagination) {
+                        oldPagination.outerHTML = newPagination.outerHTML;
+                    } else if (!oldPagination && newPagination) {
+                        document.querySelector('.overflow-x-auto').insertAdjacentHTML('afterend', newPagination.outerHTML);
+                    } else if (oldPagination && !newPagination) {
+                        oldPagination.remove();
+                    }
+                    
+                    // Update Reset button container
+                    const oldResetBtn = document.getElementById('reset-filters-container');
+                    const newResetBtn = doc.getElementById('reset-filters-container');
+                    if (oldResetBtn && newResetBtn) {
+                        oldResetBtn.innerHTML = newResetBtn.innerHTML;
+                    }
+                });
+            }, providedUrl ? 0 : 350); // Fast 350ms delay for smooth typing
+        }
+
+        // Hook up search input specifically for input event prioritizing letter-by-letter live search
+        document.querySelector('.auto-search').addEventListener('input', () => handleAjaxSearch());
+        
+        // Hook up date/select filters for change event natively without full refresh
+        filterForm.querySelectorAll('input[type="date"], select').forEach(el => {
+            el.addEventListener('change', () => handleAjaxSearch());
         });
 
-        // Set cursor to end of search input if focused
-        const searchInput = document.querySelector('.auto-search');
-        if (searchInput === document.activeElement) {
-            const val = searchInput.value;
-            searchInput.value = '';
-            searchInput.value = val;
-        }
+        // Intercept pagination anchors and reset buttons to be smooth AJAX as well
+        document.addEventListener('click', function(e) {
+            const pageLink = e.target.closest('#pagination-container a');
+            if (pageLink) {
+                e.preventDefault();
+                handleAjaxSearch(pageLink.getAttribute('href'));
+            }
+            const resetLink = e.target.closest('#reset-filters-btn');
+            if (resetLink) {
+                e.preventDefault();
+                filterForm.reset();
+                filterForm.querySelectorAll('input:not([type="hidden"]), select').forEach(i => i.value = '');
+                handleAjaxSearch(resetLink.getAttribute('href'));
+            }
+        });
     </script>
 </body>
 </html>

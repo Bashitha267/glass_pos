@@ -89,6 +89,63 @@ $items_data = $stmtItems->fetchAll(PDO::FETCH_ASSOC);
 
 $profit = $total_earnings - $total_expenses - $total_cost;
 
+// NEW 8. Total Payments Received
+$stmtTotalPayments = $pdo->prepare("
+    SELECT SUM(dp.amount) 
+    FROM delivery_payments dp 
+    JOIN delivery_customers dc ON dp.delivery_customer_id = dc.id 
+    JOIN deliveries d ON dc.delivery_id = d.id 
+    WHERE $whereClause
+");
+$stmtTotalPayments->execute($params);
+$total_payments_got = (float)$stmtTotalPayments->fetchColumn();
+
+// NEW 9. Employee Salary Payments
+$empWhere = ["status = 'paid'"];
+$empParams = [];
+if ($start_date) {
+    $empWhere[] = "payment_date >= ?";
+    $empParams[] = $start_date;
+}
+if ($end_date) {
+    $empWhere[] = "payment_date <= ?";
+    $empParams[] = $end_date;
+}
+if ($month && $year && !$start_date && !$end_date) {
+    $empWhere[] = "salary_month = ? AND salary_year = ?";
+    $empParams[] = (int)$month;
+    $empParams[] = (int)$year;
+}
+$empWhereClause = implode(" AND ", $empWhere);
+$stmtEmpPay = $pdo->prepare("SELECT SUM(salary_amount) FROM employee_salary_payments WHERE $empWhereClause");
+$stmtEmpPay->execute($empParams);
+$total_emp_payments = (float)$stmtEmpPay->fetchColumn();
+
+// NEW 10. Bank Account Aggregates
+$stmtBanks = $pdo->prepare("
+    SELECT b.name as bank_name, b.account_number, SUM(dp.amount) as total_amount
+    FROM delivery_payments dp
+    JOIN delivery_customers dc ON dp.delivery_customer_id = dc.id
+    JOIN deliveries d ON dc.delivery_id = d.id
+    JOIN banks b ON dp.bank_id = b.id
+    WHERE $whereClause
+    GROUP BY b.id
+");
+$stmtBanks->execute($params);
+$banks_data = $stmtBanks->fetchAll(PDO::FETCH_ASSOC);
+
+// NEW 11. Payment Types Pie Chart Data
+$stmtPayTypes = $pdo->prepare("
+    SELECT dp.payment_type, SUM(dp.amount) as total_amount
+    FROM delivery_payments dp
+    JOIN delivery_customers dc ON dp.delivery_customer_id = dc.id
+    JOIN deliveries d ON dc.delivery_id = d.id
+    WHERE $whereClause
+    GROUP BY dp.payment_type
+");
+$stmtPayTypes->execute($params);
+$pay_types_data = $stmtPayTypes->fetchAll(PDO::FETCH_ASSOC);
+
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -136,15 +193,9 @@ $profit = $total_earnings - $total_expenses - $total_cost;
             padding: 10px 16px;
             border-radius: 14px;
             outline: none;
-            transition: all 0.3s;
             font-size: 14px;
             font-weight: 600;
             color: #1e293b;
-        }
-
-        .input-glass:focus {
-            border-color: #6366f1;
-            background: white;
         }
 
         select.input-glass option {
@@ -179,9 +230,15 @@ $profit = $total_earnings - $total_expenses - $total_cost;
                     <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-1">Performance & Growth Insights</p>
                 </div>
             </div>
-            <div class="bg-indigo-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center space-x-3 shadow-lg shadow-indigo-600/20">
-                <i class="fa-solid fa-calendar-check text-base"></i>
-                <span>REPORT GENERATED: <?php echo date('Y-M-d'); ?></span>
+            <div class="flex items-center space-x-3">
+                <button onclick="window.print()" class="bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:text-indigo-600 px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center space-x-2 shadow-sm transition-all text-nowrap">
+                    <i class="fa-solid fa-download text-base"></i>
+                    <span>Download Report</span>
+                </button>
+                <div class="bg-indigo-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center space-x-3 shadow-lg shadow-indigo-600/20 text-nowrap">
+                    <i class="fa-solid fa-calendar-check text-base"></i>
+                    <span>REPORT GENERATED: <?php echo date('Y-M-d'); ?></span>
+                </div>
             </div>
         </div>
     </header>
@@ -226,171 +283,211 @@ $profit = $total_earnings - $total_expenses - $total_cost;
         </div>
 
         <!-- Key Metrics Grid -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
             <!-- Deliveries -->
-            <div class="glass-card p-8">
-                <div class="stat-icon bg-cyan-100/50 text-cyan-600">
+            <div class="glass-card p-8 bg-gradient-to-br from-cyan-500/10 to-transparent border-cyan-200">
+                <div class="stat-icon bg-cyan-100/50 text-cyan-600 mb-4">
                     <i class="fa-solid fa-truck-ramp-box text-2xl"></i>
                 </div>
-                <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Deliveries</p>
-                <h2 class="text-4xl font-black text-slate-900 tracking-tighter"><?php echo number_format($total_deliveries); ?></h2>
-                <div class="mt-4 flex items-center text-xs text-cyan-600 font-bold uppercase tracking-tight">
+                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Deliveries</p>
+                <h2 class="text-3xl font-black text-slate-900 tracking-tighter"><?php echo number_format($total_deliveries); ?></h2>
+                <div class="mt-3 flex items-center text-[10px] text-cyan-600 font-bold uppercase tracking-tight">
                     <i class="fa-solid fa-arrow-trend-up mr-2"></i> Scheduled Trips
                 </div>
             </div>
 
             <!-- Customers -->
-            <div class="glass-card p-8">
-                <div class="stat-icon bg-indigo-100/50 text-indigo-600">
+            <div class="glass-card p-8 bg-gradient-to-br from-indigo-500/10 to-transparent border-indigo-200">
+                <div class="stat-icon bg-indigo-100/50 text-indigo-600 mb-4">
                     <i class="fa-solid fa-users text-2xl"></i>
                 </div>
-                <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Unique Clients</p>
-                <h2 class="text-4xl font-black text-slate-900 tracking-tighter"><?php echo number_format($total_customers); ?></h2>
-                <div class="mt-4 flex items-center text-xs text-indigo-600 font-bold uppercase tracking-tight">
+                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Unique Clients</p>
+                <h2 class="text-3xl font-black text-slate-900 tracking-tighter"><?php echo number_format($total_customers); ?></h2>
+                <div class="mt-3 flex items-center text-[10px] text-indigo-600 font-bold uppercase tracking-tight">
                     <i class="fa-solid fa-circle-check mr-2"></i> Active Accounts
                 </div>
             </div>
 
-            <!-- Profit -->
-            <div class="glass-card p-8 bg-emerald-500/5 border-emerald-500/20">
-                <div class="stat-icon bg-emerald-100/50 text-emerald-600">
-                    <i class="fa-solid fa-sack-dollar text-2xl"></i>
+            <!-- Revenue -->
+            <div class="glass-card p-8 bg-gradient-to-br from-emerald-500/10 to-transparent border-emerald-200">
+                <div class="stat-icon bg-emerald-100/50 text-emerald-600 mb-4">
+                    <i class="fa-solid fa-money-bill-trend-up text-2xl"></i>
                 </div>
-                <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Net Earnings</p>
-                <h2 class="text-4xl font-black text-emerald-600 tracking-tighter">LKR <?php echo number_format($profit, 2); ?></h2>
-                <div class="mt-4 flex items-center text-xs text-emerald-600 font-bold uppercase tracking-tight">
-                    <i class="fa-solid fa-chart-line mr-2"></i> Operational Profit
+                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Sales Revenue</p>
+                <h2 class="text-3xl font-black text-emerald-600 tracking-tighter">LKR <?php echo number_format($total_earnings, 2); ?></h2>
+                <div class="mt-3 flex items-center text-[10px] text-emerald-600 font-bold uppercase tracking-tight">
+                    <i class="fa-solid fa-chart-line mr-2"></i> Subtotal Deducted
+                </div>
+            </div>
+
+            <!-- Payments Got -->
+            <div class="glass-card p-8 bg-gradient-to-br from-blue-500/10 to-transparent border-blue-200">
+                <div class="stat-icon bg-blue-100/50 text-blue-600 mb-4">
+                    <i class="fa-solid fa-hand-holding-dollar text-2xl"></i>
+                </div>
+                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Payments Got</p>
+                <h2 class="text-3xl font-black text-blue-600 tracking-tighter">LKR <?php echo number_format($total_payments_got, 2); ?></h2>
+                <div class="mt-3 flex items-center text-[10px] text-blue-600 font-bold uppercase tracking-tight">
+                    <i class="fa-solid fa-coins mr-2"></i> Collected Cashflow
                 </div>
             </div>
 
             <!-- Pending -->
-            <div class="glass-card p-8 bg-rose-500/5 border-rose-500/20">
-                <div class="stat-icon bg-rose-100/50 text-rose-600">
+            <div class="glass-card p-8 bg-gradient-to-br from-rose-500/10 to-transparent border-rose-200">
+                <div class="stat-icon bg-rose-100/50 text-rose-600 mb-4">
                     <i class="fa-solid fa-wallet text-2xl"></i>
                 </div>
-                <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Outstanding Balance</p>
-                <h2 class="text-4xl font-black text-rose-600 tracking-tighter">LKR <?php echo number_format($pending_payments, 2); ?></h2>
-                <div class="mt-4 flex items-center text-xs text-rose-600 font-bold uppercase tracking-tight">
+                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Outstanding Balance</p>
+                <h2 class="text-3xl font-black text-rose-600 tracking-tighter">LKR <?php echo number_format($pending_payments, 2); ?></h2>
+                <div class="mt-3 flex items-center text-[10px] text-rose-600 font-bold uppercase tracking-tight">
                     <i class="fa-solid fa-triangle-exclamation mr-2"></i> Total Due AR
+                </div>
+            </div>
+
+            <!-- Total Expenses -->
+            <div class="glass-card p-8 bg-gradient-to-br from-orange-500/10 to-transparent border-orange-200">
+                <div class="stat-icon bg-orange-100/50 text-orange-600 mb-4">
+                    <i class="fa-solid fa-file-invoice-dollar text-2xl"></i>
+                </div>
+                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Expenses</p>
+                <h2 class="text-3xl font-black text-orange-600 tracking-tighter">LKR <?php echo number_format($total_expenses, 2); ?></h2>
+                <div class="mt-3 flex items-center text-[10px] text-orange-600 font-bold uppercase tracking-tight">
+                    <i class="fa-solid fa-gas-pump mr-2"></i> Operational OpEx
+                </div>
+            </div>
+
+            <!-- Profit -->
+            <div class="glass-card p-8 bg-gradient-to-br from-teal-500/10 to-transparent border-teal-200">
+                <div class="stat-icon bg-teal-100/50 text-teal-600 mb-4">
+                    <i class="fa-solid fa-sack-dollar text-2xl"></i>
+                </div>
+                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Operational Profit</p>
+                <h2 class="text-3xl font-black text-teal-600 tracking-tighter">LKR <?php echo number_format($profit, 2); ?></h2>
+                <div class="mt-3 flex items-center text-[10px] text-teal-600 font-bold uppercase tracking-tight">
+                    <i class="fa-solid fa-scale-balanced mr-2"></i> Net Earnings
+                </div>
+            </div>
+
+            <!-- Employee Payments -->
+            <div class="glass-card p-8 bg-gradient-to-br from-amber-500/10 to-transparent border-amber-200">
+                <div class="stat-icon bg-amber-100/50 text-amber-600 mb-4">
+                    <i class="fa-solid fa-money-check-dollar text-2xl"></i>
+                </div>
+                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Employee Salary Payments</p>
+                <h2 class="text-3xl font-black text-amber-600 tracking-tighter">LKR <?php echo number_format($total_emp_payments, 2); ?></h2>
+                <div class="mt-3 flex items-center text-[10px] text-amber-600 font-bold uppercase tracking-tight">
+                    <i class="fa-solid fa-users-gear mr-2"></i> Paid HR Overhead
                 </div>
             </div>
         </div>
 
-        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
-            <!-- Charts Section -->
-            <div class="lg:col-span-5">
-                <div class="glass-card p-8 h-full">
-                    <div class="flex items-center justify-between mb-8">
-                        <div>
-                            <h3 class="text-xl font-black text-slate-900 font-['Outfit']">Inventory Distribution</h3>
-                            <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-1">Most Sold Brand Items (By Volume)</p>
-                        </div>
-                        <i class="fa-solid fa-chart-pie text-slate-300 text-2xl"></i>
+        <div class="mb-10">
+            <div class="glass-card p-8 border-slate-200 bg-white/60 text-slate-900">
+                <div class="flex items-center justify-between mb-8">
+                    <div>
+                        <h3 class="text-xl font-black font-['Outfit']">Bank Details by Payments</h3>
+                        <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-1">Aggregated Collection Overview</p>
                     </div>
-                    
-                    <div class="relative flex justify-center">
-                        <canvas id="itemsChart" style="max-height: 400px; max-width: 400px;"></canvas>
-                    </div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left">
+                        <thead>
+                            <tr class="text-[10px] uppercase font-black tracking-widest text-slate-400 border-b border-slate-100">
+                                <th class="pb-4 px-4">Bank Name</th>
+                                <th class="pb-4 px-4">Account Details</th>
+                                <th class="pb-4 px-4 text-right">Total Payments Collected</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-50">
+                            <?php foreach($banks_data as $b): ?>
+                                <tr class="hover:bg-slate-50/50 transition-colors">
+                                    <td class="py-4 px-4 h-[60px]">
+                                        <div class="flex items-center space-x-3">
+                                            <div class="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600 border border-indigo-100">
+                                                <i class="fa-solid fa-building-columns text-xs"></i>
+                                            </div>
+                                            <span class="text-xs font-bold text-slate-700 uppercase tracking-tight"><?php echo htmlspecialchars($b['bank_name']); ?></span>
+                                        </div>
+                                    </td>
+                                    <td class="py-4 px-4">
+                                        <span class="text-xs font-black text-slate-500 uppercase tracking-[0.1em]"><?php echo htmlspecialchars($b['account_number']); ?></span>
+                                    </td>
+                                    <td class="py-4 px-4 text-right">
+                                        <span class="text-sm font-black text-slate-900">LKR <?php echo number_format($b['total_amount'], 2); ?></span>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                            <?php if (empty($banks_data)): ?>
+                                <tr>
+                                    <td colspan="3" class="py-10 text-center text-slate-400 font-bold text-xs uppercase tracking-widest italic">
+                                        No bank payment collections found.
+                                    </td>
+                                </tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
 
-                    <div class="mt-8 space-y-4">
-                        <?php foreach($items_data as $i): ?>
-                            <div class="flex items-center justify-between p-3 rounded-2xl bg-slate-50 border border-slate-100">
-                                <span class="text-xs font-black text-slate-700 uppercase tracking-tight"><?php echo htmlspecialchars($i['brand_name']); ?></span>
-                                <span class="text-xs font-black text-slate-900"><?php echo number_format($i['total_qty']); ?> PKTS</span>
-                            </div>
-                        <?php endforeach; ?>
-                        <?php if(empty($items_data)): ?>
-                            <p class="text-center text-slate-400 italic text-sm py-10">No sales data available for this period.</p>
-                        <?php endif; ?>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- Items Pie Chart -->
+            <div class="glass-card p-8 h-full bg-slate-50 border-slate-200">
+                <div class="flex items-center justify-between mb-8">
+                    <div>
+                        <h3 class="text-xl font-black text-slate-900 font-['Outfit']">Inventory Distribution</h3>
+                        <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-1">Most Sold Brand Items (By Volume)</p>
                     </div>
+                </div>
+                <div class="relative flex justify-center mb-8">
+                    <canvas id="itemsChart" style="max-height: 250px; max-width: 250px;"></canvas>
+                </div>
+                <div class="space-y-3">
+                    <?php foreach($items_data as $i): ?>
+                        <div class="flex items-center justify-between p-3 rounded-2xl bg-white border border-slate-100 shadow-sm">
+                            <span class="text-[11px] font-black text-slate-500 uppercase tracking-widest"><?php echo htmlspecialchars($i['brand_name']); ?></span>
+                            <span class="text-xs font-black text-slate-900"><?php echo number_format($i['total_qty']); ?> PKTS</span>
+                        </div>
+                    <?php endforeach; ?>
                 </div>
             </div>
 
-            <!-- Financial Breakdown -->
-            <div class="lg:col-span-7">
-                <div class="glass-card p-8 h-full">
-                    <div class="flex items-center justify-between mb-10 border-b border-slate-100 pb-6">
-                        <div>
-                            <h3 class="text-xl font-black text-slate-900 font-['Outfit']">Financial Breakdown</h3>
-                            <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-1">Revenue vs Expenditure Analysis</p>
-                        </div>
-                        <div class="text-right">
-                            <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mb-1">Financial Health</p>
-                            <span class="px-4 py-1.5 bg-emerald-100 text-emerald-600 rounded-full text-[10px] font-black uppercase tracking-widest">Operational</span>
-                        </div>
+            <!-- Payment Types Pie Chart -->
+            <div class="glass-card p-8 h-full bg-slate-50 border-slate-200">
+                <div class="flex items-center justify-between mb-8">
+                    <div>
+                        <h3 class="text-xl font-black text-slate-900 font-['Outfit']">Payment Types Source</h3>
+                        <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-1">Transaction Methods Breakdown</p>
                     </div>
-
-                    <div class="space-y-8">
-                        <!-- Revenue -->
-                        <div class="relative">
-                            <div class="flex justify-between items-center mb-3">
-                                <span class="text-xs font-bold text-slate-600 uppercase tracking-widest">Total Sales Revenue</span>
-                                <span class="text-sm font-black text-slate-900">LKR <?php echo number_format($total_earnings, 2); ?></span>
-                            </div>
-                            <div class="w-full bg-slate-100 rounded-full h-3">
-                                <div class="bg-indigo-500 h-3 rounded-full" style="width: 100%"></div>
-                            </div>
+                </div>
+                <div class="relative flex justify-center mb-8">
+                    <canvas id="paymentsChart" style="max-height: 250px; max-width: 250px;"></canvas>
+                </div>
+                <div class="space-y-3 mt-4">
+                    <?php foreach($pay_types_data as $pt): ?>
+                        <div class="flex items-center justify-between p-3 rounded-2xl bg-white border border-slate-100 shadow-sm">
+                            <span class="text-[11px] font-black text-slate-500 uppercase tracking-widest"><?php echo htmlspecialchars($pt['payment_type']); ?></span>
+                            <span class="text-xs font-black text-slate-900">LKR <?php echo number_format($pt['total_amount'], 2); ?></span>
                         </div>
-
-                        <!-- COGS -->
-                        <div class="relative">
-                            <div class="flex justify-between items-center mb-3">
-                                <span class="text-xs font-bold text-slate-600 uppercase tracking-widest">Cost of Good Sold (COGS)</span>
-                                <span class="text-sm font-black text-rose-600">LKR <?php echo number_format($total_cost, 2); ?></span>
-                            </div>
-                            <div class="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
-                                <?php $cogsPerc = $total_earnings > 0 ? ($total_cost / $total_earnings) * 100 : 0; ?>
-                                <div class="bg-rose-500 h-3" style="width: <?php echo min(100, $cogsPerc); ?>%"></div>
-                            </div>
-                            <p class="text-[9px] text-slate-400 mt-2 font-black uppercase tracking-widest">Margin Impact: <?php echo number_format($cogsPerc, 1); ?>% of Revenue</p>
-                        </div>
-
-                        <!-- OpEx -->
-                        <div class="relative">
-                            <div class="flex justify-between items-center mb-3">
-                                <span class="text-xs font-bold text-slate-600 uppercase tracking-widest">Operating Expenses (Fuel/Staff)</span>
-                                <span class="text-sm font-black text-amber-600">LKR <?php echo number_format($total_expenses, 2); ?></span>
-                            </div>
-                            <div class="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
-                                <?php $opexPerc = $total_earnings > 0 ? ($total_expenses / $total_earnings) * 100 : 0; ?>
-                                <div class="bg-amber-500 h-3" style="width: <?php echo min(100, $opexPerc); ?>%"></div>
-                            </div>
-                            <p class="text-[9px] text-slate-400 mt-2 font-black uppercase tracking-widest">OpEx Ratio: <?php echo number_format($opexPerc, 1); ?>% of Revenue</p>
-                        </div>
-
-                        <!-- Profitability Card -->
-                        <div class="mt-12 p-8 rounded-[2rem] bg-gradient-to-br from-indigo-900 to-slate-900 text-white shadow-2xl relative overflow-hidden group">
-                            <div class="absolute top-0 right-0 p-10 opacity-10 transform scale-150 rotate-12 group-hover:rotate-45 transition-transform duration-700">
-                                <i class="fa-solid fa-gem text-9xl"></i>
-                            </div>
-                            <div class="relative z-10">
-                                <p class="text-[10px] font-black uppercase tracking-[0.3em] text-indigo-300 mb-2">Net Business Profitability</p>
-                                <h3 class="text-5xl font-black tracking-tighter mb-4">LKR <?php echo number_format($profit, 2); ?></h3>
-                                <p class="text-xs text-indigo-400 font-bold leading-relaxed max-w-sm">
-                                    Your net profit after deducting all operational costs, inventory procurement expenses, and delivery overheads for the selected period.
-                                </p>
-                            </div>
-                        </div>
-                    </div>
+                    <?php endforeach; ?>
                 </div>
             </div>
         </div>
     </main>
 
     <script>
-        // Pie Chart Initialization
-        const ctx = document.getElementById('itemsChart');
+        // Pie Chart Initialization (Items)
+        const ctxItems = document.getElementById('itemsChart');
         const itemsData = <?php echo json_encode($items_data); ?>;
-        
-        const labels = itemsData.map(i => i.brand_name);
-        const values = itemsData.map(i => i.total_qty);
+        const labelsItems = itemsData.map(i => i.brand_name);
+        const valuesItems = itemsData.map(i => i.total_qty);
 
-        new Chart(ctx, {
+        new Chart(ctxItems, {
             type: 'doughnut',
             data: {
-                labels: labels,
+                labels: labelsItems,
                 datasets: [{
-                    data: values,
+                    data: valuesItems,
                     backgroundColor: [
                         '#6366f1', '#10b981', '#f59e0b', '#ef4444', 
                         '#06b6d4', '#8b5cf6', '#ec4899', '#14b8a6', 
@@ -404,9 +501,7 @@ $profit = $total_earnings - $total_expenses - $total_cost;
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: {
-                    legend: {
-                        display: false
-                    },
+                    legend: { display: false },
                     tooltip: {
                         padding: 15,
                         titleFont: { size: 13, weight: 'bold' },
@@ -414,6 +509,53 @@ $profit = $total_earnings - $total_expenses - $total_cost;
                         backgroundColor: 'rgba(15, 23, 42, 0.95)',
                         cornerRadius: 12,
                         displayColors: true
+                    }
+                },
+                cutout: '75%'
+            }
+        });
+
+        // Pie Chart Initialization (Payments)
+        const ctxPayments = document.getElementById('paymentsChart');
+        const paymentsData = <?php echo json_encode($pay_types_data); ?>;
+        const labelsPay = paymentsData.map(i => i.payment_type);
+        const valuesPay = paymentsData.map(i => i.total_amount);
+
+        new Chart(ctxPayments, {
+            type: 'doughnut',
+            data: {
+                labels: labelsPay,
+                datasets: [{
+                    data: valuesPay,
+                    backgroundColor: [
+                        '#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444'
+                    ],
+                    borderWidth: 0,
+                    hoverOffset: 20
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        padding: 15,
+                        titleFont: { size: 13, weight: 'bold' },
+                        bodyFont: { size: 12 },
+                        backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                        cornerRadius: 12,
+                        displayColors: true,
+                        callbacks: {
+                            label: function(context) {
+                                let label = context.label || '';
+                                if (label) { label += ': '; }
+                                if (context.parsed !== null) {
+                                    label += new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR' }).format(context.parsed);
+                                }
+                                return label;
+                            }
+                        }
                     }
                 },
                 cutout: '75%'

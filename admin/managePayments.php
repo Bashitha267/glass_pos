@@ -182,8 +182,8 @@ $start_date = $_GET['start_date'] ?? '';
 $end_date = $_GET['end_date'] ?? '';
 $status_filter = $_GET['status'] ?? '';
 $p_type_filter = $_GET['type'] ?? '';
-$month = $_GET['month'] ?? date('m');
-$year = $_GET['year'] ?? date('Y');
+$month = $_GET['month'] ?? '';
+$year = $_GET['year'] ?? '';
 
 $where = ["1=1"];
 $params = [];
@@ -400,20 +400,21 @@ $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <label class="text-[10px] uppercase font-black text-slate-400 mb-2 ml-1 block tracking-widest">Search</label>
                     <div class="relative">
                         <i class="fa-solid fa-search absolute left-4 top-1/2 -translate-y-1/2 text-slate-500"></i>
-                        <input type="text" name="search" id="liveSearch" value="<?php echo htmlspecialchars($search); ?>" placeholder="ID, Client or Cheque#" class="input-glass w-full pl-11 bg-slate-800/50 border-slate-700 text-white placeholder:text-slate-600 focus:bg-slate-800">
+                        <input type="text" name="search" id="liveSearch" value="<?php echo htmlspecialchars($search); ?>" placeholder="ID, Client or Cheque#" class="w-full pl-11 bg-slate-800/50 border border-slate-700 text-white placeholder:text-slate-600 focus:bg-slate-800 px-4 py-2.5 rounded-xl outline-none transition-all text-sm font-semibold focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/50">
                     </div>
                 </div>
                 <div class="md:col-span-2">
                     <label class="text-[10px] uppercase font-black text-slate-400 mb-2 ml-1 block tracking-widest">From Date</label>
-                    <input type="date" name="start_date" value="<?php echo htmlspecialchars($start_date); ?>" class="input-glass w-full bg-slate-800/50 border-slate-700 text-white">
+                    <input type="date" name="start_date" value="<?php echo htmlspecialchars($start_date); ?>" class="w-full bg-slate-800/50 border border-slate-700 text-white px-4 py-2.5 rounded-xl outline-none transition-all text-sm font-semibold focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/50">
                 </div>
                 <div class="md:col-span-2">
                     <label class="text-[10px] uppercase font-black text-slate-400 mb-2 ml-1 block tracking-widest">To Date</label>
-                    <input type="date" name="end_date" value="<?php echo htmlspecialchars($end_date); ?>" class="input-glass w-full bg-slate-800/50 border-slate-700 text-white">
+                    <input type="date" name="end_date" value="<?php echo htmlspecialchars($end_date); ?>" class="w-full bg-slate-800/50 border border-slate-700 text-white px-4 py-2.5 rounded-xl outline-none transition-all text-sm font-semibold focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/50">
                 </div>
                 <div class="md:col-span-1">
                     <label class="text-[10px] uppercase font-black text-slate-400 mb-2 ml-1 block tracking-widest">Month</label>
-                    <select name="month" class="input-glass w-full bg-slate-800/50 border-slate-700 text-white appearance-none cursor-pointer">
+                    <select name="month" class="w-full bg-slate-800/50 border border-slate-700 text-white px-4 py-2.5 rounded-xl outline-none transition-all text-sm font-semibold focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/50 appearance-none cursor-pointer">
+                        <option value="" class="bg-slate-900 text-white">All Term</option>
                         <?php for($m=1; $m<=12; $m++): ?>
                             <option value="<?php echo str_pad($m, 2, '0', STR_PAD_LEFT); ?>" <?php echo $month == str_pad($m, 2, '0', STR_PAD_LEFT) ? 'selected' : ''; ?> class="bg-slate-900 text-white">
                                 <?php echo date('M', mktime(0, 0, 0, $m, 1)); ?>
@@ -423,7 +424,8 @@ $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 </div>
                 <div class="md:col-span-1">
                     <label class="text-[10px] uppercase font-black text-slate-400 mb-2 ml-1 block tracking-widest">Year</label>
-                    <select name="year" class="input-glass w-full bg-slate-800/50 border-slate-700 text-white appearance-none cursor-pointer">
+                    <select name="year" class="w-full bg-slate-800/50 border border-slate-700 text-white px-4 py-2.5 rounded-xl outline-none transition-all text-sm font-semibold focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/50 appearance-none cursor-pointer">
+                        <option value="" class="bg-slate-900 text-white">All Term</option>
                         <?php for($y=date('Y'); $y>=2024; $y--): ?>
                             <option value="<?php echo $y; ?>" <?php echo $year == $y ? 'selected' : ''; ?> class="bg-slate-900 text-white"><?php echo $y; ?></option>
                         <?php endfor; ?>
@@ -431,7 +433,7 @@ $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 </div>
                 <div class="md:col-span-1">
                     <label class="text-[10px] uppercase font-black text-slate-400 mb-2 ml-1 block tracking-widest">Status</label>
-                    <select name="status" class="input-glass w-full bg-slate-800/50 border-slate-700 text-white appearance-none cursor-pointer">
+                    <select name="status" class="w-full bg-slate-800/50 border border-slate-700 text-white px-4 py-2.5 rounded-xl outline-none transition-all text-sm font-semibold focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/50 appearance-none cursor-pointer">
                         <option value="" class="bg-slate-900 text-white">All</option>
                         <option value="completed" <?php echo $status_filter == 'completed' ? 'selected' : ''; ?> class="bg-slate-900 text-white">Complete</option>
                         <option value="pending" <?php echo $status_filter == 'pending' ? 'selected' : ''; ?> class="bg-slate-900 text-white">Pending</option>
@@ -439,7 +441,7 @@ $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 </div>
                 <div class="md:col-span-1">
                     <label class="text-[10px] uppercase font-black text-slate-400 mb-2 ml-1 block tracking-widest">Type</label>
-                    <select name="type" class="input-glass w-full bg-slate-800/50 border-slate-700 text-white appearance-none cursor-pointer">
+                    <select name="type" class="w-full bg-slate-800/50 border border-slate-700 text-white px-4 py-2.5 rounded-xl outline-none transition-all text-sm font-semibold focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/50 appearance-none cursor-pointer">
                         <option value="" class="bg-slate-900 text-white">All</option>
                         <option value="Cash" <?php echo $p_type_filter == 'Cash' ? 'selected' : ''; ?> class="bg-slate-900 text-white">Cash</option>
                         <option value="Cheque" <?php echo $p_type_filter == 'Cheque' ? 'selected' : ''; ?> class="bg-slate-900 text-white">Cheque</option>
@@ -758,7 +760,7 @@ $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     let html = `
                         <table class="w-full text-left">
                             <thead>
-                                <tr class="text-[9px] uppercase font-black text-slate-400 border-b border-slate-100">
+                                <tr class="text-[10px] uppercase font-black text-slate-600 border-b border-slate-200">
                                     <th class="pb-3 px-2">Type</th>
                                     <th class="pb-3 px-2">Date</th>
                                     <th class="pb-3 px-2">Bank Details</th>
@@ -768,36 +770,36 @@ $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                     <th class="pb-3 px-2 text-center">Action</th>
                                 </tr>
                             </thead>
-                            <tbody class="divide-y divide-slate-50">
+                            <tbody class="divide-y divide-slate-100">
                     `;
 
                     res.data.forEach(p => {
                         html += `
-                            <tr class="text-[11px] font-bold text-slate-700 hover:bg-slate-50 transition-colors">
+                            <tr class="text-[12px] font-bold text-slate-800 hover:bg-slate-50 transition-colors">
                                 <td class="py-4 px-2">
-                                    <span class="bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded text-[9px] uppercase font-black">${p.payment_type}</span>
+                                    <span class="bg-indigo-100 text-indigo-800 px-2.5 py-1.5 rounded-md text-[10px] uppercase font-black ring-1 ring-indigo-200">${p.payment_type}</span>
                                 </td>
-                                <td class="py-4 px-2 text-slate-500">${new Date(p.payment_date).toLocaleDateString()}</td>
+                                <td class="py-4 px-2 text-slate-800 font-extrabold">${new Date(p.payment_date).toLocaleDateString()}</td>
                                 <td class="py-4 px-2">
                                     ${p.bank_name ? `
-                                        <p class="text-slate-900 leading-none mb-1">${p.bank_name}</p>
-                                        <p class="text-[9px] text-slate-400 font-bold uppercase">${p.bank_acc}</p>
-                                    ` : '<span class="text-slate-300 italic font-medium">N/A</span>'}
-                                    ${p.cheque_payer ? `<p class="text-[9px] text-indigo-500 font-black mt-1 uppercase tracking-tighter">Payer: ${p.cheque_payer}</p>` : ''}
+                                        <p class="text-slate-900 leading-none mb-1 font-black">${p.bank_name}</p>
+                                        <p class="text-[10px] text-slate-600 font-bold uppercase">${p.bank_acc}</p>
+                                    ` : '<span class="text-slate-400 italic font-medium">N/A</span>'}
+                                    ${p.cheque_payer ? `<p class="text-[10px] text-indigo-600 font-black mt-1 uppercase tracking-tighter">Payer: ${p.cheque_payer}</p>` : ''}
                                 </td>
                                 <td class="py-4 px-2 text-center">
                                     ${p.proof_image ? `
-                                        <a href="../uploads/payments/${p.proof_image}" target="_blank" class="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white transition-all inline-flex items-center justify-center border border-indigo-100 shadow-sm" title="View Proof">
+                                        <a href="../uploads/payments/${p.proof_image}" target="_blank" class="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white transition-all inline-flex items-center justify-center border border-emerald-200 shadow-sm" title="View Proof">
                                             <i class="fa-solid fa-image text-xs"></i>
                                         </a>
-                                    ` : '<span class="text-[9px] text-slate-300 font-bold uppercase">N/A</span>'}
+                                    ` : '<span class="text-[10px] text-slate-400 font-bold uppercase">N/A</span>'}
                                 </td>
                                 <td class="py-4 px-2 text-center">
-                                    <span class="text-[10px] text-slate-500 font-black">${p.cheque_number || '-'}</span>
+                                    <span class="text-[12px] text-slate-700 font-black">${p.cheque_number || '-'}</span>
                                 </td>
-                                <td class="py-4 px-2 text-right font-black text-slate-900 leading-tight">LKR ${parseFloat(p.amount).toLocaleString()}</td>
+                                <td class="py-4 px-2 text-right font-black text-slate-900 leading-tight">LKR ${parseFloat(p.amount).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
                                 <td class="py-4 px-2 text-center">
-                                    <button onclick="deletePayment(${p.id})" class="text-rose-400 hover:text-rose-600 transition-all p-2 hover:bg-rose-50 rounded-lg">
+                                    <button onclick="deletePayment(${p.id})" class="text-rose-500 hover:text-rose-700 transition-all p-2 hover:bg-rose-100 rounded-lg">
                                         <i class="fa-solid fa-trash-can"></i>
                                     </button>
                                 </td>
@@ -805,7 +807,7 @@ $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         `;
                     });
 
-                    if(res.data.length === 0) html += '<tr><td colspan="7" class="py-10 text-center text-slate-400 italic">No transactions recorded.</td></tr>';
+                    if(res.data.length === 0) html += '<tr><td colspan="7" class="py-10 text-center text-slate-500 italic font-bold">No transactions recorded.</td></tr>';
                     
                     html += '</tbody></table>';
                     container.innerHTML = html;
