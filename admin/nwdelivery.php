@@ -525,6 +525,13 @@ $deliveries = $stmt->fetchAll();
             background-color: #f8fafc;
             color: #0891b2;
         }
+
+        .qty-warning {
+            border-color: #ef4444 !important;
+            background-color: #fef2f2 !important;
+            color: #b91c1c !important;
+            box-shadow: 0 0 10px rgba(239, 68, 68, 0.1) !important;
+        }
     </style>
 </head>
 <body class="flex flex-col">
@@ -1044,6 +1051,7 @@ $deliveries = $stmt->fetchAll();
                                         const elId = row.querySelector('.item-id'); if(elId) elId.value = item.container_item_id || '';
                                         const elSearch = row.querySelector('.item-search'); if(elSearch) elSearch.value = item.brand_name || '';
                                         const elQty = row.querySelector('.item-qty'); if(elQty) elQty.value = item.qty || 0;
+                                        const elMaxQty = row.querySelector('.max-qty'); if(elMaxQty) elMaxQty.value = (parseFloat(item.available_qty) || 0) + (parseFloat(item.qty) || 0);
                                         const elDmg = row.querySelector('.item-dmg'); if(elDmg) elDmg.value = item.damaged_qty || 0;
                                         const elPrice = row.querySelector('.item-price'); if(elPrice) elPrice.value = item.selling_price || 0;
                                         const elDiscount = row.querySelector('.item-discount'); if(elDiscount) elDiscount.value = item.discount_amount || 0;
@@ -1361,16 +1369,17 @@ $deliveries = $stmt->fetchAll();
         function addItemRow(blockId) {
             const id = (Date.now() + Math.random()).toString().replace('.', '');
             const html = `
-                <div id="item-${id}" class="space-y-1">
+                                <div id="item-${id}" class="space-y-1">
                     <div class="grid grid-cols-12 gap-2 items-center">
-                        <div class="col-span-4 relative">
-                            <input type="text" placeholder="Product..." class="input-glass w-full h-[36px] text-xs font-bold item-search" onkeyup="searchBrands(this.value, '${id}')" onfocus="searchBrands(this.value, '${id}')">
+                        <div class="col-span-3 relative">
+                            <input type="text" placeholder="Product..." class="input-glass w-full h-[36px] text-[11px] font-bold item-search" onkeyup="searchBrands(this.value, '${id}')" onfocus="searchBrands(this.value, '${id}')">
                             <div class="brand-results hidden absolute w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-[100] p-1"></div>
                             <input type="hidden" class="item-id">
                             <input type="hidden" class="cost-price">
+                            <input type="hidden" class="max-qty">
                         </div>
-                        <div class="col-span-1">
-                            <input type="number" placeholder="0" class="input-glass w-full h-[36px] text-xs font-bold item-qty" onkeyup="calculateTotals()">
+                        <div class="col-span-2">
+                            <input type="number" placeholder="Qty" class="input-glass w-full h-[36px] text-xs font-bold item-qty" onkeyup="calculateTotals()">
                         </div>
                         <div class="col-span-2">
                             <input type="number" placeholder="0.00" class="input-glass w-full h-[36px] text-xs font-bold item-price" onkeyup="calculateTotals()">
@@ -1398,8 +1407,9 @@ $deliveries = $stmt->fetchAll();
         function selectBrand(itemId, id, name, qty, cost) {
             const row = document.getElementById(`item-${itemId}`);
             row.querySelector('.item-id').value = id;
-            row.querySelector('.item-search').value = `${name} (Avail: ${qty} / Cost: LKR ${cost})`;
+            row.querySelector('.item-search').value = `${name} (Stock: ${qty})`;
             row.querySelector('.cost-price').value = cost;
+            row.querySelector('.max-qty').value = qty;
             
             const stockDiv = row.querySelector('.stock-info');
             if(stockDiv) {
@@ -1537,11 +1547,22 @@ $deliveries = $stmt->fetchAll();
             document.querySelectorAll('#customer_blocks .glass-card').forEach(block => {
                 let customerSubtotal = 0;
                 block.querySelectorAll('.order-items .grid').forEach(row => {
-                    const q = parseFloat(row.querySelector('.item-qty').value) || 0;
+                    const qtyInput = row.querySelector('.item-qty');
+                    const q = parseFloat(qtyInput.value) || 0;
+                    const maxQ = parseFloat(row.querySelector('.max-qty').value) || 999999;
                     const p = parseFloat(row.querySelector('.item-price').value) || 0;
                     const cp = parseFloat(row.querySelector('.cost-price').value) || 0;
                     const dmg = parseFloat(row.querySelector('.item-dmg').value) || 0;
                     const disc = parseFloat(row.querySelector('.item-discount').value) || 0;
+
+                    // Warning for over-stock
+                    if (q > maxQ) {
+                        qtyInput.classList.add('qty-warning');
+                        qtyInput.title = `Warning: Only ${maxQ} available in stock!`;
+                    } else {
+                        qtyInput.classList.remove('qty-warning');
+                        qtyInput.title = "";
+                    }
                     
                     const lineTotal = ((q - dmg) * p) - disc;
                     customerSubtotal += lineTotal;
