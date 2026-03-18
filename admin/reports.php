@@ -278,14 +278,14 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
                     <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-1">Performance & Growth Insights</p>
                 </div>
             </div>
-            <div class="flex items-center space-x-3">
-                <a href="?<?php echo http_build_query(array_merge($_GET, ['action' => 'export_excel'])); ?>" class="bg-emerald-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center space-x-2 shadow-sm shadow-emerald-600/20 transition-all text-nowrap hover:bg-emerald-700">
+            <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                <a href="?<?php echo http_build_query(array_merge($_GET, ['action' => 'export_excel'])); ?>" class="bg-emerald-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center space-x-2 shadow-sm shadow-emerald-600/20 transition-all hover:bg-emerald-700">
                     <i class="fa-solid fa-file-excel text-base"></i>
                     <span>Export Excel</span>
                 </a>
-                <div class="bg-indigo-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center space-x-3 shadow-lg shadow-indigo-600/20 text-nowrap">
+                <div class="bg-indigo-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center space-x-3 shadow-lg shadow-indigo-600/20">
                     <i class="fa-solid fa-calendar-check text-base"></i>
-                    <span>REPORT GENERATED: <?php echo date('Y-M-d'); ?></span>
+                    <span class="whitespace-nowrap">REPORT GENERATED: <?php echo date('Y-M-d'); ?></span>
                 </div>
             </div>
         </div>

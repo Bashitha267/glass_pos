@@ -643,7 +643,9 @@ $deliveries = $stmt->fetchAll();
                                 </p>
                             </td>
                             <td class="px-5 py-3.5 text-right">
-                                <div class="flex items-center justify-end space-x-1.5">
+                                    <a href="del_details.php?id=<?php echo $d['id']; ?>" class="bg-slate-900 hover:bg-black text-white px-3.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all shadow-lg">
+                                        View
+                                    </a>
                                     <button onclick="openEditModal(<?php echo $d['id']; ?>)" class="bg-emerald-600 hover:bg-black text-white px-3.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-600/10">
                                         Edit
                                     </button>
@@ -1369,28 +1371,28 @@ $deliveries = $stmt->fetchAll();
         function addItemRow(blockId) {
             const id = (Date.now() + Math.random()).toString().replace('.', '');
             const html = `
-                                <div id="item-${id}" class="space-y-1">
-                    <div class="grid grid-cols-12 gap-2 items-center">
-                        <div class="col-span-3 relative">
+                <div id="item-${id}" class="space-y-1">
+                    <div class="grid grid-cols-12 gap-2 md:gap-2 items-center">
+                        <div class="col-span-12 md:col-span-3 relative">
                             <input type="text" placeholder="Product..." class="input-glass w-full h-[36px] text-[11px] font-bold item-search" onkeyup="searchBrands(this.value, '${id}')" onfocus="searchBrands(this.value, '${id}')">
                             <div class="brand-results hidden absolute w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-[100] p-1"></div>
                             <input type="hidden" class="item-id">
                             <input type="hidden" class="cost-price">
                             <input type="hidden" class="max-qty">
                         </div>
-                        <div class="col-span-2">
+                        <div class="col-span-3 md:col-span-2">
                             <input type="number" placeholder="Qty" class="input-glass w-full h-[36px] text-xs font-bold item-qty" onkeyup="calculateTotals()">
                         </div>
-                        <div class="col-span-2">
+                        <div class="col-span-3 md:col-span-2">
                             <input type="number" placeholder="0.00" class="input-glass w-full h-[36px] text-xs font-bold item-price" onkeyup="calculateTotals()">
                         </div>
-                        <div class="col-span-2">
-                            <input type="number" placeholder="Dmg" class="input-glass w-full h-[36px] text-xs font-bold item-dmg border-red-100 text-red-600" onkeyup="calculateTotals()" title="Damaged Qty">
+                        <div class="col-span-2 md:col-span-2">
+                            <input type="number" placeholder="Dmg" class="input-glass w-full h-[36px] text-[10px] font-bold item-dmg border-red-100 text-red-600" onkeyup="calculateTotals()" title="Damaged Qty">
                         </div>
-                        <div class="col-span-2">
-                            <input type="number" placeholder="0.00" class="input-glass w-full h-[36px] text-xs font-bold item-discount" onkeyup="calculateTotals()" title="Discount">
+                        <div class="col-span-3 md:col-span-2">
+                            <input type="number" placeholder="0.00" class="input-glass w-full h-[36px] text-[10px] font-bold item-discount" onkeyup="calculateTotals()" title="Discount">
                         </div>
-                        <div class="col-span-1 text-center text-slate-300 hover:text-rose-500 cursor-pointer" onclick="document.getElementById('item-${id}').remove(); calculateTotals();">
+                        <div class="col-span-1 text-center text-slate-300 hover:text-rose-500 cursor-pointer" onmousedown="document.getElementById('item-${id}').remove(); calculateTotals();">
                             <i class="fa-solid fa-minus-circle text-[10px]"></i>
                         </div>
                     </div>
