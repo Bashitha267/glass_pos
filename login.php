@@ -92,15 +92,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <div class="w-full max-w-md animate-fade-in px-4">
         <div class="glass-card p-10 md:p-12 text-slate-800">
             <div class="text-center mb-10">
-                <div class="inline-flex items-center justify-center w-20 h-20 mb-6 rounded-3xl bg-gradient-to-tr from-cyan-600 to-blue-700 shadow-xl shadow-cyan-900/10 transform hover:scale-105 transition-transform">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="w-10 h-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                    </svg>
+                <div class="inline-flex items-center justify-center w-20 h-20 mb-6 rounded-3xl bg-white/10 shadow-xl transform hover:scale-105 transition-transform overflow-hidden">
+                    <img src="assests/logo.jpeg" alt="Crystal POS logo" class="w-20 h-20 object-cover">
                 </div>
                 <h1 class="text-4xl font-extrabold tracking-tight text-slate-900 mb-2 font-['Outfit']">
                     Crystal POS
                 </h1>
-                <p class="text-slate-600 text-base font-bold">Glass Pallet Shop Management</p>
+                <p class="text-slate-600 text-base font-bold">Sahan Picture &amp; Mirror — Inventory Management System</p>
             </div>
 
             <?php if ($error): ?>

@@ -94,8 +94,8 @@ $pending_deliveries = $stmt->fetchAll();
     <header class="glass-header sticky top-0 z-50 py-3 mb-6">
         <div class="px-7 flex items-center justify-between gap-4">
             <div class="flex items-center space-x-4">
-                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-400 to-blue-600 flex items-center justify-center font-bold text-lg shadow-lg">
-                    <i class="fa-solid fa-gem text-white text-sm"></i>
+                <div class="w-10 h-10 rounded-xl bg-white overflow-hidden flex items-center justify-center shadow-lg">
+                    <img src="../assests/logo.jpeg" alt="Crystal POS logo" class="w-10 h-10 object-cover">
                 </div>
                 <h1 class="text-xl font-bold tracking-wider uppercase hidden sm:block">Crystal POS</h1>
             </div>
@@ -173,7 +173,7 @@ $pending_deliveries = $stmt->fetchAll();
     </main>
 
     <footer class="py-10 text-center opacity-40">
-        <p class="text-[10px] uppercase tracking-widest font-bold">&copy; 2024 Crystal POS System &bull; Employee Portal</p>
+        <p class="text-[10px] uppercase tracking-widest font-bold">&copy; <?php echo date('Y'); ?> Crystal POS — Sahan Picture &amp; Mirror Inventory Management System &bull; Employee Portal</p>
     </footer>
 
 </body>

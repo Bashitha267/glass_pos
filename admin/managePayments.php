@@ -30,13 +30,7 @@ if ($action == 'create_bank') {
     exit;
 }
 
-if ($action == 'search_cheque_customer') {
-    $term = '%' . $_GET['term'] . '%';
-    $stmt = $pdo->prepare("SELECT id, name FROM customers WHERE name LIKE ? LIMIT 5");
-    $stmt->execute([$term]);
-    echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
-    exit;
-}
+
 
 if ($action == 'save_payment') {
     try {
@@ -46,7 +40,7 @@ if ($action == 'save_payment') {
         $date = $_POST['date'];
         $bank_id = !empty($_POST['bank_id']) ? $_POST['bank_id'] : null;
         $chq_no = $_POST['chq_no'] ?: null;
-        $chq_cust_id = !empty($_POST['chq_cust_id']) ? $_POST['chq_cust_id'] : null;
+        $chq_payer = $_POST['chq_payer'] ?: null;
         
         $proof = null;
         if (isset($_FILES['proof']) && $_FILES['proof']['error'] == 0) {
@@ -55,8 +49,8 @@ if ($action == 'save_payment') {
             move_uploaded_file($_FILES['proof']['tmp_name'], '../uploads/payments/' . $proof);
         }
 
-        $stmt = $pdo->prepare("INSERT INTO delivery_payments (delivery_customer_id, amount, payment_type, bank_id, cheque_number, proof_image, payment_date, cheque_customer_id, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        $stmt->execute([$dc_id, $amount, $type, $bank_id, $chq_no, $proof, $date, $chq_cust_id, $user_id]);
+        $stmt = $pdo->prepare("INSERT INTO delivery_payments (delivery_customer_id, amount, payment_type, bank_id, cheque_number, proof_image, payment_date, cheque_payer_name, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt->execute([$dc_id, $amount, $type, $bank_id, $chq_no, $proof, $date, $chq_payer, $user_id]);
         
         // Update customer payment status
         $stmtStatus = $pdo->prepare("SELECT dc.subtotal, dc.discount, (SELECT SUM(amount) FROM delivery_payments WHERE delivery_customer_id = dc.id) as total_paid FROM delivery_customers dc WHERE dc.id = ?");
@@ -75,10 +69,9 @@ if ($action == 'save_payment') {
 if ($action == 'get_history') {
     $dc_id = (int)$_GET['dc_id'];
     $stmt = $pdo->prepare("
-        SELECT dp.*, b.name as bank_name, b.account_number as bank_acc, cust.name as cheque_payer 
+        SELECT dp.*, b.name as bank_name, b.account_number as bank_acc, dp.cheque_payer_name as cheque_payer 
         FROM delivery_payments dp 
         LEFT JOIN banks b ON dp.bank_id = b.id 
-        LEFT JOIN customers cust ON dp.cheque_customer_id = cust.id 
         WHERE dp.delivery_customer_id = ? 
         ORDER BY dp.payment_date DESC
     ");
@@ -578,11 +571,9 @@ $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                 <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Cheque Number</label>
                                 <input type="text" name="chq_no" class="input-glass w-full" placeholder="XXXXXX">
                             </div>
-                            <div class="col-span-2 sm:col-span-1 relative">
+                            <div class="col-span-2 sm:col-span-1">
                                 <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Cheque Payer</label>
-                                <input type="text" id="chq_cust_search" placeholder="Search customer..." class="input-glass w-full" onkeyup="searchChequeCustomer(this.value)">
-                                <div id="chq_cust_results" class="hidden absolute w-full top-[110%] left-0 z-30 bg-white/95 backdrop-blur-xl border border-slate-200 rounded-2xl shadow-2xl p-2 max-h-[200px] overflow-y-auto"></div>
-                                <input type="hidden" name="chq_cust_id" id="selected_chq_cust_id">
+                                <input type="text" name="chq_payer" placeholder="Enter payer name (Optional)" class="input-glass w-full">
                             </div>
                         </div>
                     </div>
@@ -764,28 +755,7 @@ $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 });
         }
 
-        function searchChequeCustomer(term) {
-            const results = document.getElementById('chq_cust_results');
-            if(term.length < 2) return results.classList.add('hidden');
-            fetch(`?action=search_cheque_customer&term=${term}`)
-                .then(r => r.json())
-                .then(data => {
-                    let html = '';
-                    data.forEach(c => {
-                        html += `<div class="p-3 hover:bg-slate-100 cursor-pointer rounded-xl" onclick="selectChequeCust(${c.id}, '${c.name}')">
-                            <p class="text-xs font-black text-slate-800 uppercase">${c.name}</p>
-                        </div>`;
-                    });
-                    results.innerHTML = html || '<p class="p-4 text-center text-xs text-slate-400">Not found</p>';
-                    results.classList.remove('hidden');
-                });
-        }
 
-        function selectChequeCust(id, name) {
-            document.getElementById('selected_chq_cust_id').value = id;
-            document.getElementById('chq_cust_search').value = name;
-            document.getElementById('chq_cust_results').classList.add('hidden');
-        }
 
         function previewProof(input) {
             if (input.files && input.files[0]) {

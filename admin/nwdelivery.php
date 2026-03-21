@@ -240,7 +240,7 @@ if ($action == 'view_delivery') {
             $items->execute([$cr['id']]);
             $cr['items'] = $items->fetchAll(PDO::FETCH_ASSOC);
 
-            $payments = $pdo->prepare("SELECT dp.*, b.name as bank_name, b.account_number as bank_acc, cust.name as cheque_payer FROM delivery_payments dp LEFT JOIN banks b ON dp.bank_id = b.id LEFT JOIN customers cust ON dp.cheque_customer_id = cust.id WHERE dp.delivery_customer_id = ? ORDER BY dp.payment_date DESC");
+            $payments = $pdo->prepare("SELECT dp.*, b.name as bank_name, b.account_number as bank_acc, dp.cheque_payer_name as cheque_payer FROM delivery_payments dp LEFT JOIN banks b ON dp.bank_id = b.id WHERE dp.delivery_customer_id = ? ORDER BY dp.payment_date DESC");
             $payments->execute([$cr['id']]);
             $cr['payments'] = $payments->fetchAll(PDO::FETCH_ASSOC);
             $cr['total_paid'] = array_sum(array_column($cr['payments'], 'amount'));
@@ -299,13 +299,7 @@ if ($action == 'create_bank') {
     exit;
 }
 
-if ($action == 'search_cheque_customer') {
-    $term = '%' . $_GET['term'] . '%';
-    $stmt = $pdo->prepare("SELECT id, name FROM customers WHERE name LIKE ? LIMIT 5");
-    $stmt->execute([$term]);
-    echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
-    exit;
-}
+
 
 if ($action == 'save_payment') {
     try {
@@ -315,7 +309,7 @@ if ($action == 'save_payment') {
         $date = $_POST['date'];
         $bank_id = !empty($_POST['bank_id']) ? $_POST['bank_id'] : null;
         $chq_no = $_POST['chq_no'] ?: null;
-        $chq_cust_id = !empty($_POST['chq_cust_id']) ? $_POST['chq_cust_id'] : null;
+        $chq_payer = $_POST['chq_payer'] ?: null;
         
         $proof = null;
         if (isset($_FILES['proof']) && $_FILES['proof']['error'] == 0) {
@@ -324,8 +318,8 @@ if ($action == 'save_payment') {
             move_uploaded_file($_FILES['proof']['tmp_name'], '../uploads/payments/' . $proof);
         }
 
-        $stmt = $pdo->prepare("INSERT INTO delivery_payments (delivery_customer_id, amount, payment_type, bank_id, cheque_number, proof_image, payment_date, cheque_customer_id, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        $stmt->execute([$dc_id, $amount, $type, $bank_id, $chq_no, $proof, $date, $chq_cust_id, $user_id]);
+        $stmt = $pdo->prepare("INSERT INTO delivery_payments (delivery_customer_id, amount, payment_type, bank_id, cheque_number, proof_image, payment_date, cheque_payer_name, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt->execute([$dc_id, $amount, $type, $bank_id, $chq_no, $proof, $date, $chq_payer, $user_id]);
         
         // Update customer payment status if fully paid
         $stmt = $pdo->prepare("SELECT dc.subtotal, dc.discount, (SELECT SUM(amount) FROM delivery_payments WHERE delivery_customer_id = dc.id) as total_paid FROM delivery_customers dc WHERE dc.id = ?");
@@ -636,20 +630,29 @@ $deliveries = $stmt->fetchAll();
                             </td>
                             <td class="px-5 py-3.5 text-center">
                                 <?php 
-                                $isPaid = ($d['got_payments'] >= $d['total_revenue'] && $d['total_revenue'] > 0);
+                                if ($d['got_payments'] >= $d['total_revenue'] && $d['total_revenue'] > 0) {
+                                    $status_label = 'Paid';
+                                    $status_class = 'bg-emerald-100 text-emerald-700';
+                                } elseif ($d['got_payments'] > 0) {
+                                    $status_label = 'Pending';
+                                    $status_class = 'bg-yellow-100 text-yellow-700';
+                                } else {
+                                    $status_label = 'Not Paid';
+                                    $status_class = 'bg-rose-100 text-rose-700';
+                                }
                                 ?>
-                                <p class="px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider inline-block <?php echo $isPaid ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'; ?>">
-                                    <?php echo $isPaid ? 'complete' : 'pending'; ?>
+                                <p class="px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider inline-block <?php echo $status_class; ?>">
+                                    <?php echo $status_label; ?>
                                 </p>
                             </td>
-                            <td class="px-5 py-3.5 text-right">
-                                    <a href="del_details.php?id=<?php echo $d['id']; ?>" class="bg-slate-900 hover:bg-black text-white px-3.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all shadow-lg">
+                            <td class="px-5 py-2.5 text-right">
+                                    <a href="del_details.php?id=<?php echo $d['id']; ?>" class="bg-slate-700 hover:bg-black text-white px-2.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all shadow-lg">
                                         View
                                     </a>
-                                    <button onclick="openEditModal(<?php echo $d['id']; ?>)" class="bg-emerald-600 hover:bg-black text-white px-3.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-600/10">
-                                        Edit
+                                    <button onclick="openEditModal(<?php echo $d['id']; ?>)" class="ml-1 bg-emerald-600 hover:bg-emerald-800 text-white px-2.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-600/10">
+                                        update
                                     </button>
-                                    <button onclick="confirmDeleteTrip(<?php echo $d['id']; ?>)" class="bg-rose-600 hover:bg-black text-white px-3.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-rose-600/10">
+                                    <button onclick="confirmDeleteTrip(<?php echo $d['id']; ?>)" class="bg-rose-600 hover:bg-rose-800 text-white px-2.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-rose-600/10">
                                         Delete
                                     </button>
                                 </div>
@@ -850,11 +853,9 @@ $deliveries = $stmt->fetchAll();
                             <label class="text-[10px] uppercase font-black text-slate-500 tracking-widest ml-1 mb-1.5 block">Cheque Number</label>
                             <input type="text" name="chq_no" class="input-glass w-full h-[48px] font-bold">
                         </div>
-                        <div class="relative">
+                        <div>
                             <label class="text-[10px] uppercase font-black text-slate-500 tracking-widest ml-1 mb-1.5 block">Payer (Client)</label>
-                            <input type="text" id="chq_cust_search" placeholder="Search..." class="input-glass w-full h-[48px] font-bold" onkeyup="searchChequeCustomers(this.value)">
-                            <div id="chq_cust_results" class="absolute w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-[100] hidden overflow-hidden"></div>
-                            <input type="hidden" name="chq_cust_id" id="selected_chq_cust_id">
+                            <input type="text" name="chq_payer" placeholder="Enter name (Optional)" class="input-glass w-full h-[48px] font-bold">
                         </div>
                     </div>
                 </div>
@@ -1663,38 +1664,50 @@ $deliveries = $stmt->fetchAll();
                         const paid = parseFloat(c.total_paid);
                         const pending = total - paid;
                         
+                        const isFullyPaid = (paid >= total && total > 0);
+                        const cardBg = isFullyPaid ? 'bg-emerald-50/70' : (paid > 0 ? 'bg-yellow-50/70' : 'bg-rose-50/70');
+                        const btnState = isFullyPaid ? 'disabled style="opacity: 0.3; cursor: not-allowed; pointer-events: none; filter: grayscale(1);"' : '';
+
+                        const statusHtml = isFullyPaid 
+                            ? '<span class="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider">Paid</span>'
+                            : (paid > 0 ? '<span class="bg-yellow-100 text-yellow-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider">Pending</span>' 
+                                       : '<span class="bg-rose-100 text-rose-700 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-wider">Not Paid</span>');
+                        
                         const safeName = c.name.replace(/'/g, "\\'").replace(/"/g, "&quot;");
                         
                         html += `
-                            <div class="glass-card p-6 border-slate-200/50 bg-white/40">
+                            <div class="glass-card p-6 border-slate-200/50 ${cardBg} transition-all duration-500">
                                 <div class="flex flex-col md:flex-row md:items-center gap-8 mb-8">
                                     <div class="flex items-center gap-4 min-w-[240px]">
-                                        <div class="w-12 h-12 bg-indigo-50 border-2 border-indigo-500/20 rounded-2xl flex items-center justify-center text-indigo-600 shadow-sm flex-shrink-0">
+                                        <div class="w-12 h-12 bg-white border-2 border-indigo-500/20 rounded-2xl flex items-center justify-center text-indigo-600 shadow-sm flex-shrink-0">
                                             <i class="fa-solid fa-store text-lg"></i>
                                         </div>
                                         <div>
-                                            <h4 class="text-xl font-black text-slate-900 font-['Outfit'] tracking-tight">${c.name}</h4>
+                                            <div class="flex items-center gap-3">
+                                                <h4 class="text-xl font-black text-slate-900 font-['Outfit'] tracking-tight">${c.name}</h4>
+                                                ${statusHtml}
+                                            </div>
                                             <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest">${c.address}</p>
                                         </div>
                                     </div>
                                     
-                                    <div class="flex gap-12 border-l border-slate-100 pl-8">
+                                    <div class="flex gap-12 border-l border-slate-200/50 pl-8">
                                         <div class="text-left">
                                             <p class="text-[9px] uppercase font-black text-slate-400 mb-1">Total Bill</p>
                                             <p class="text-sm font-black text-slate-900">LKR ${total.toLocaleString()}</p>
                                         </div>
-                                        <div class="text-left border-l border-slate-100 pl-8">
+                                        <div class="text-left border-l border-slate-200/50 pl-8">
                                             <p class="text-[9px] uppercase font-black text-emerald-500 mb-1">Paid</p>
                                             <p class="text-sm font-black text-emerald-600">LKR ${paid.toLocaleString()}</p>
                                         </div>
-                                        <div class="text-left border-l border-slate-100 pl-8">
+                                        <div class="text-left border-l border-slate-200/50 pl-8">
                                             <p class="text-[9px] uppercase font-black text-rose-500 mb-1">Pending</p>
                                             <p class="text-sm font-black text-rose-600">LKR ${pending.toLocaleString()}</p>
                                         </div>
                                     </div>
                                     
                                     <div class="md:ml-auto">
-                                        <button onclick="openAddPayment(${c.id}, '${safeName}', ${pending}, ${c.customer_id})" class="bg-indigo-600 hover:bg-black text-white px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-2xl shadow-indigo-600/20 transition-all flex items-center gap-3 group">
+                                        <button onclick="openAddPayment(${c.id}, '${safeName}', ${pending}, ${c.customer_id})" ${btnState} class="bg-indigo-600 hover:bg-black text-white px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-2xl shadow-indigo-600/20 transition-all flex items-center gap-3 group">
                                             <i class="fa-solid fa-plus-circle group-hover:rotate-90 transition-transform"></i>
                                             <span>New Payment</span>
                                         </button>
@@ -1795,8 +1808,8 @@ $deliveries = $stmt->fetchAll();
             document.getElementById('proof_section').classList.toggle('hidden', type !== 'Account Transfer' && type !== 'Cheque');
             
             if (type === 'Cheque' && currentCustomerInfo.id) {
-                document.getElementById('selected_chq_cust_id').value = currentCustomerInfo.id;
-                document.getElementById('chq_cust_search').value = currentCustomerInfo.name;
+                const payerInput = document.querySelector('[name="chq_payer"]');
+                if (payerInput) payerInput.value = currentCustomerInfo.name;
             }
         }
 
@@ -1861,28 +1874,7 @@ $deliveries = $stmt->fetchAll();
                 });
         }
 
-        function searchChequeCustomers(term) {
-            if(term.length < 2) return document.getElementById('chq_cust_results').classList.add('hidden');
-            fetch(`?action=search_cheque_customer&term=${term}`)
-                .then(r => r.json())
-                .then(data => {
-                    let html = '';
-                    data.forEach(c => {
-                        html += `<div class="p-3 hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-0" onmousedown="selectChqCust(${c.id}, '${c.name.replace(/'/g, "\\'")}')">
-                            <p class="text-xs font-black text-slate-800 uppercase">${c.name}</p>
-                        </div>`;
-                    });
-                    const res = document.getElementById('chq_cust_results');
-                    res.innerHTML = html || '<div class="p-3 text-center text-[10px] text-slate-400 font-bold italic">No results</div>';
-                    res.classList.remove('hidden');
-                });
-        }
 
-        function selectChqCust(id, name) {
-            document.getElementById('selected_chq_cust_id').value = id;
-            document.getElementById('chq_cust_search').value = name;
-            document.getElementById('chq_cust_results').classList.add('hidden');
-        }
 
         function savePayment(e) {
             e.preventDefault();

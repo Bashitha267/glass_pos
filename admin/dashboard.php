@@ -58,7 +58,7 @@ $dash_total_profit = $dash_total_revenue - $dash_total_cost - $dash_total_expens
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Control Center | Crystal POS</title>
+    <title>Control Center | Crystal POS — Sahan Picture &amp; Mirror</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -145,12 +145,12 @@ $dash_total_profit = $dash_total_revenue - $dash_total_cost - $dash_total_expens
     <header class="glass-header sticky top-0 z-50 py-3 leading-none">
         <div class="max-w-[1400px] mx-auto px-6 flex items-center justify-between">
             <div class="flex items-center space-x-4">
-                <div class="w-11 h-11 rounded-2xl bg-slate-900 flex items-center justify-center shadow-lg">
-                    <i class="fa-solid fa-gem text-cyan-400 text-lg"></i>
+                <div class="w-11 h-11 rounded-2xl bg-white overflow-hidden flex items-center justify-center shadow-lg">
+                    <img src="../assests/logo.jpeg" alt="Crystal POS logo" class="w-10 h-10 object-cover">
                 </div>
                 <div>
                     <h1 class="text-xl font-black uppercase tracking-tighter text-slate-900 font-['Outfit']">Crystal POS</h1>
-                    <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Admin Control Center</p>
+                    <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Sahan Picture &amp; Mirror — Inventory Management System</p>
                 </div>
             </div>
 
@@ -169,6 +169,7 @@ $dash_total_profit = $dash_total_revenue - $dash_total_cost - $dash_total_expens
                     <div class="text-right flex-col justify-center">
                         <span class="text-premium-label block">System Time</span>
                         <p id="current-time" class="text-sm font-black text-slate-800 tracking-widest mt-0.5"></p>
+                        <p id="current-date" class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5"></p>
                     </div>
                     <div class="w-px h-8 bg-slate-200"></div>
                     <div class="text-right flex-col justify-center">
@@ -191,23 +192,19 @@ $dash_total_profit = $dash_total_revenue - $dash_total_cost - $dash_total_expens
         <!-- Dashboard Grid -->
         <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
             <!-- Point of Sale -->
-            <div class="glass-card group p-8 flex flex-col items-center justify-center text-center cursor-pointer">
+            <a href="pos.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
                 <div class="action-icon w-16 h-16 bg-cyan-50 border-2 border-cyan-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
                     <i class="fa-solid fa-cash-register text-3xl text-cyan-600"></i>
                 </div>
                 <h3 class="text-premium-label text-slate-800 group-hover:text-cyan-600 transition-colors">Point of Sale</h3>
-            </div>
-
-            <!-- New Delivery -->
-            <a href="nwdelivery.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
+            </a>
+                  <a href="nwdelivery.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
                 <div class="action-icon w-16 h-16 bg-amber-50 border-2 border-amber-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
                     <i class="fa-solid fa-truck-fast text-3xl text-amber-600"></i>
                 </div>
                 <h3 class="text-premium-label text-slate-800 group-hover:text-amber-600 transition-colors">Delivery Management</h3>
             </a>
- 
-            <!-- Manage Stocks -->
-            <a href="addcontainer.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
+             <a href="addcontainer.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
                 <div class="action-icon w-16 h-16 bg-blue-50 border-2 border-blue-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
                     <i class="fa-solid fa-boxes-stacked text-3xl text-blue-600"></i>
                 </div>
@@ -220,6 +217,13 @@ $dash_total_profit = $dash_total_revenue - $dash_total_cost - $dash_total_expens
                 </div>
                 <h3 class="text-premium-label text-slate-800 group-hover:text-indigo-600 transition-colors">Payment Management</h3>
             </a>
+            <!-- POS Sales History -->
+            
+            <!-- New Delivery -->
+      
+ 
+            <!-- Manage Stocks -->
+           
                      <a href="salary.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
                 <div class="action-icon w-16 h-16 bg-emerald-50 border-2 border-emerald-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
                     <i class="fa-solid fa-money-check-dollar text-3xl text-emerald-600"></i>
@@ -239,13 +243,27 @@ $dash_total_profit = $dash_total_revenue - $dash_total_cost - $dash_total_expens
    
             <!-- Payment Management -->
        
+<a href="pos_sales_history.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
+                <div class="action-icon w-16 h-16 bg-violet-50 border-2 border-violet-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
+                    <i class="fa-solid fa-store text-3xl text-violet-600"></i>
+                </div>
+                <h3 class="text-premium-label text-slate-800 group-hover:text-violet-600 transition-colors">POS Sales History</h3>
+            </a>
+
+            <!-- POS Audits -->
+            <a href="pos_sale_audits.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
+                <div class="action-icon w-16 h-16 bg-orange-50 border-2 border-orange-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
+                    <i class="fa-solid fa-shield-halved text-3xl text-orange-600"></i>
+                </div>
+                <h3 class="text-premium-label text-slate-800 group-hover:text-orange-600 transition-colors">POS Audits</h3>
+            </a>
 
             <!-- Container Ledger -->
             <a href="ledger.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
                 <div class="action-icon w-16 h-16 bg-slate-100 border-2 border-slate-400/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
                     <i class="fa-solid fa-list-check text-3xl text-slate-700"></i>
                 </div>
-                <h3 class="text-premium-label text-slate-800 group-hover:text-slate-900 transition-colors">Audit Ledger</h3>
+                <h3 class="text-premium-label text-slate-800 group-hover:text-slate-900 transition-colors">System Audit Ledger</h3>
             </a>
 
             <!-- Payment History -->
@@ -253,7 +271,7 @@ $dash_total_profit = $dash_total_revenue - $dash_total_cost - $dash_total_expens
                 <div class="action-icon w-16 h-16 bg-emerald-50 border-2 border-emerald-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
                     <i class="fa-solid fa-receipt text-3xl text-emerald-600"></i>
                 </div>
-                <h3 class="text-premium-label text-slate-800 group-hover:text-emerald-600 transition-colors">Payment History</h3>
+                <h3 class="text-premium-label text-slate-800 group-hover:text-emerald-600 transition-colors">Delivery Payment History</h3>
             </a>
 
            
@@ -271,7 +289,7 @@ $dash_total_profit = $dash_total_revenue - $dash_total_cost - $dash_total_expens
     <footer class="py-12 border-t border-slate-100 mt-12">
         <div class="max-w-7xl mx-auto px-6 text-center">
             <p class="text-[10px] text-white uppercase tracking-[0.4em] font-black">
-                CRYSTAL POS &bull; PREMIUM ENTERPRISE EDITION &bull; <?php echo date('Y'); ?>
+                Crystal POS &bull; Sahan Picture &amp; Mirror Inventory Management System &bull; <?php echo date('Y'); ?>
             </p>
         </div>
     </footer>
@@ -279,10 +297,30 @@ $dash_total_profit = $dash_total_revenue - $dash_total_cost - $dash_total_expens
     <script>
         function updateDateTime() {
             const now = new Date();
-            const dateOptions = { day: '2-digit', month: 'short', year: 'numeric', weekday: 'long' };
-            document.getElementById('current-date').textContent = now.toLocaleDateString('en-GB', dateOptions);
-            const timeOptions = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true };
-            document.getElementById('current-time').textContent = now.toLocaleTimeString('en-GB', timeOptions);
+            const timeOptions = { 
+                hour: '2-digit', 
+                minute: '2-digit', 
+                second: '2-digit', 
+                hour12: true,
+                timeZone: 'Asia/Colombo'
+            };
+            const dateOptions = { 
+                weekday: 'long', 
+                day: '2-digit', 
+                month: 'short', 
+                year: 'numeric',
+                timeZone: 'Asia/Colombo'
+            };
+            
+            const timeElement = document.getElementById('current-time');
+            const dateElement = document.getElementById('current-date');
+            
+            if (timeElement) {
+                timeElement.textContent = now.toLocaleTimeString('en-US', timeOptions);
+            }
+            if (dateElement) {
+                dateElement.textContent = now.toLocaleDateString('en-US', dateOptions);
+            }
         }
         setInterval(updateDateTime, 1000);
         updateDateTime();

@@ -236,3 +236,72 @@ CREATE TABLE IF NOT EXISTS employee_salary_payments (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (recorded_by) REFERENCES users(id)
 );
+
+-- =====================================================
+-- POS (Point of Sale) System Tables
+-- =====================================================
+
+CREATE TABLE IF NOT EXISTS pos_sales (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    bill_id VARCHAR(20) NOT NULL UNIQUE,
+    sale_date DATE NOT NULL,
+    customer_id INT DEFAULT NULL,
+    created_by INT NOT NULL,
+    subtotal DECIMAL(15, 2) DEFAULT 0.00,
+    item_discount DECIMAL(15, 2) DEFAULT 0.00,
+    bill_discount DECIMAL(15, 2) DEFAULT 0.00,
+    bill_discount_type VARCHAR(20) DEFAULT NULL,
+    grand_total DECIMAL(15, 2) DEFAULT 0.00,
+    payment_method ENUM('Cash', 'Account Transfer', 'Cheque', 'Card', 'Later Payment', 'Multiple') DEFAULT 'Cash',
+    payment_status ENUM('pending', 'completed') DEFAULT 'pending',
+    notes TEXT DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL,
+    FOREIGN KEY (created_by) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS pos_sale_items (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    sale_id INT NOT NULL,
+    container_item_id INT NOT NULL,
+    qty INT NOT NULL,
+    damaged_qty INT DEFAULT 0,
+    cost_price DECIMAL(15, 2) NOT NULL,
+    selling_price DECIMAL(15, 2) NOT NULL,
+    item_discount DECIMAL(15, 2) DEFAULT 0.00,
+    line_total DECIMAL(15, 2) NOT NULL,
+    FOREIGN KEY (sale_id) REFERENCES pos_sales(id) ON DELETE CASCADE,
+    FOREIGN KEY (container_item_id) REFERENCES container_items(id)
+);
+
+CREATE TABLE IF NOT EXISTS pos_sale_payments (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    sale_id INT NOT NULL,
+    amount DECIMAL(15, 2) NOT NULL,
+    payment_type ENUM('Cash', 'Account Transfer', 'Cheque', 'Card') NOT NULL,
+    bank_id INT DEFAULT NULL,
+    cheque_number VARCHAR(50) DEFAULT NULL,
+    cheque_payer_name VARCHAR(100) DEFAULT NULL,
+    proof_image VARCHAR(255) DEFAULT NULL,
+    payment_date DATE NOT NULL,
+    recorded_by INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (sale_id) REFERENCES pos_sales(id) ON DELETE CASCADE,
+    FOREIGN KEY (bank_id) REFERENCES banks(id) ON DELETE SET NULL,
+    FOREIGN KEY (recorded_by) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS pos_sale_audits (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    sale_id INT DEFAULT NULL,
+    action_type ENUM('CREATED','EDITED','DELETED','PAYMENT_ADDED','PAYMENT_DELETED') NOT NULL,
+    field_name VARCHAR(100) DEFAULT NULL,
+    old_value TEXT DEFAULT NULL,
+    new_value TEXT DEFAULT NULL,
+    notes TEXT DEFAULT NULL,
+    changed_by INT NOT NULL,
+    changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (sale_id) REFERENCES pos_sales(id) ON DELETE SET NULL,
+    FOREIGN KEY (changed_by) REFERENCES users(id)
+);

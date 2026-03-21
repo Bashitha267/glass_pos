@@ -108,13 +108,7 @@ if ($action) {
             exit;
         }
 
-        if ($action == 'search_cheque_customer') {
-            $term = '%' . $_GET['term'] . '%';
-            $stmt = $pdo->prepare("SELECT id, name FROM customers WHERE name LIKE ? LIMIT 5");
-            $stmt->execute([$term]);
-            echo json_encode($stmt->fetchAll());
-            exit;
-        }
+
 
         if ($action == 'save_payment') {
             $dc_id = $_POST['dc_id'];
@@ -124,7 +118,7 @@ if ($action) {
             $due_date = ($type == 'Cheque') ? date('Y-m-d', strtotime($date . ' + 12 days')) : null;
             $bank_id = $_POST['bank_id'] ?: null;
             $chq_no = $_POST['chq_no'] ?: null;
-            $chq_cust_id = $_POST['chq_cust_id'] ?: null;
+            $chq_payer = $_POST['chq_payer'] ?: null;
             
             $proof = null;
             if (isset($_FILES['proof']) && $_FILES['proof']['error'] == 0) {
@@ -133,8 +127,8 @@ if ($action) {
                 move_uploaded_file($_FILES['proof']['tmp_name'], '../uploads/payments/' . $proof);
             }
 
-            $stmt = $pdo->prepare("INSERT INTO delivery_payments (delivery_customer_id, amount, payment_type, bank_id, cheque_number, proof_image, payment_date, due_date, cheque_customer_id, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->execute([$dc_id, $amount, $type, $bank_id, $chq_no, $proof, $date, $due_date, $chq_cust_id, $_SESSION['user_id']]);
+            $stmt = $pdo->prepare("INSERT INTO delivery_payments (delivery_customer_id, amount, payment_type, bank_id, cheque_number, proof_image, payment_date, due_date, cheque_payer_name, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$dc_id, $amount, $type, $bank_id, $chq_no, $proof, $date, $due_date, $chq_payer, $_SESSION['user_id']]);
             echo json_encode(['success' => true]);
             exit;
         }
@@ -149,6 +143,37 @@ if ($action) {
                 $stmt->execute([$bill, $dc_id]);
                 echo json_encode(['success' => true]);
             } else { echo json_encode(['success' => false]); }
+            exit;
+        }
+        if ($action == 'delete_customer_order') {
+            $dc_id = (int)$_POST['dc_id'];
+            $pdo->beginTransaction();
+            try {
+                // Return items to stock
+                $itemsStmt = $pdo->prepare("SELECT container_item_id, qty FROM delivery_items WHERE delivery_customer_id = ?");
+                $itemsStmt->execute([$dc_id]);
+                $items = $itemsStmt->fetchAll();
+                foreach ($items as $it) {
+                    $pdo->prepare("UPDATE container_items SET sold_qty = GREATEST(0, sold_qty - ?) WHERE id = ?")
+                        ->execute([$it['qty'], $it['container_item_id']]);
+                }
+                
+                // Delete related records
+                $pdo->prepare("DELETE FROM delivery_items WHERE delivery_customer_id = ?")->execute([$dc_id]);
+                $pdo->prepare("DELETE FROM delivery_payments WHERE delivery_customer_id = ?")->execute([$dc_id]);
+                $pdo->prepare("DELETE FROM delivery_proof_photos WHERE delivery_customer_id = ?")->execute([$dc_id]);
+                $pdo->prepare("DELETE FROM delivery_customers WHERE id = ?")->execute([$dc_id]);
+                
+                // Recalculate trip total_sales
+                $pdo->prepare("UPDATE deliveries SET total_sales = (SELECT COALESCE(SUM(subtotal - discount), 0) FROM delivery_customers WHERE delivery_id = ?) WHERE id = ?")
+                    ->execute([$id, $id]);
+                    
+                $pdo->commit();
+                echo json_encode(['success' => true]);
+            } catch (Exception $e) {
+                $pdo->rollBack();
+                echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+            }
             exit;
         }
     } catch (Exception $e) { echo json_encode(['success' => false, 'message' => $e->getMessage()]); exit; }
@@ -174,7 +199,7 @@ foreach ($customers as &$c) {
     $stmt->execute([$c['id']]);
     $c['items'] = $stmt->fetchAll();
 
-    $stmt = $pdo->prepare("SELECT dp.*, b.name as bank_name, b.account_number, b.account_name, cust.name as cheque_payer FROM delivery_payments dp LEFT JOIN banks b ON dp.bank_id = b.id LEFT JOIN customers cust ON dp.cheque_customer_id = cust.id WHERE dp.delivery_customer_id = ? ORDER BY dp.payment_date DESC");
+    $stmt = $pdo->prepare("SELECT dp.*, b.name as bank_name, b.account_number, b.account_name, dp.cheque_payer_name as cheque_payer FROM delivery_payments dp LEFT JOIN banks b ON dp.bank_id = b.id WHERE dp.delivery_customer_id = ? ORDER BY dp.payment_date DESC");
     $stmt->execute([$c['id']]);
     $c['payments'] = $stmt->fetchAll();
     
@@ -412,21 +437,23 @@ $pending_payment = $total_revenue - $total_paid;
             if ($customer_pending <= 0 && $customer_total > 0) {
                 $status_label = 'PAID';
                 $status_class = 'bg-emerald-100 border-emerald-300 text-emerald-700';
-                $card_status_class = 'bg-emerald-50/70 border-emerald-100';
+                $card_status_class = 'bg-emerald-100/30 border-emerald-100';
             } elseif ((float)$c['total_paid'] > 0) {
                 $status_label = 'PENDING';
                 $status_class = 'bg-yellow-100 border-yellow-300 text-yellow-700';
-                $card_status_class = 'bg-yellow-50/70 border-yellow-100';
+                $card_status_class = 'bg-yellow-100/30 border-yellow-100';
             } else {
                 $status_label = 'NOT PAID';
                 $status_class = 'bg-rose-100 border-rose-300 text-rose-700';
-                $card_status_class = 'bg-rose-50/70 border-rose-100';
+                $card_status_class = 'bg-rose-100/30 border-rose-100';
             }
             ?>
             <div class="glass-card overflow-hidden animate-slide-up print-pure-black <?php echo $card_status_class; ?>">
-                <div class="p-6 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between">
+                <div class="p-6 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between group">
                     <div>
-                        <h2 class="text-xl font-black text-slate-900 font-['Outfit'] tracking-tight capitalize"><?php echo $c['customer_name']; ?></h2>
+                        <div class="flex items-center gap-3">
+                            <h2 class="text-xl font-black text-slate-900 font-['Outfit'] tracking-tight capitalize"><?php echo $c['customer_name']; ?></h2>
+                        </div>
                         <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mt-1">
                             <?php echo $c['address']; ?> &bull; <i class="fa-solid fa-phone mr-1"></i> <?php echo $c['contact_number']; ?>
                         </p>
@@ -491,19 +518,29 @@ $pending_payment = $total_revenue - $total_paid;
                         <div class="space-y-4">
                             <div class="flex items-center justify-between mb-2">
                                 <h4 class="text-[10px] font-black text-slate-400 uppercase tracking-widest print-label">Payment History</h4>
-                                <button onclick="openPaymentModal(<?php echo $c['id']; ?>, '<?php echo addslashes($c['customer_name']); ?>')" class="text-[9px] bg-emerald-600 text-white px-3 py-1.5 rounded-lg font-black uppercase no-print">+ Add</button>
+                                <?php if ($customer_pending > 0): ?>
+                                    <button onclick="openPaymentModal(<?php echo $c['id']; ?>, '<?php echo addslashes($c['customer_name']); ?>')" class="text-[9px] bg-emerald-600 text-white px-3 py-1.5 rounded-lg font-black uppercase no-print">+ Add</button>
+                                <?php else: ?>
+                                    <button disabled class="text-[9px] bg-slate-300 text-slate-500 px-3 py-1.5 rounded-lg font-black uppercase no-print cursor-not-allowed opacity-50 flex items-center gap-1">
+                                        <i class="fa-solid fa-check-double scale-75"></i> Settled
+                                    </button>
+                                <?php endif; ?>
                             </div>
                             <div class="space-y-2">
                                 <?php foreach($c['payments'] as $p): ?>
                                 <div class="p-3 bg-white border border-slate-100 rounded-xl flex items-center justify-between shadow-sm print-pure-black">
                                     <div>
                                         <p class="text-xs font-black text-slate-800">LKR <?php echo number_format($p['amount'], 2); ?></p>
-                                        <p class="text-[9px] font-black text-slate-400 uppercase"><?php echo $p['payment_type']; ?> &bull; <?php echo date('M d, Y', strtotime($p['payment_date'])); ?></p>
+                                        <p class="text-[9px] font-black text-slate-400 uppercase">
+                                            <?php echo $p['payment_type']; ?> &bull; <?php echo date('M d, Y', strtotime($p['payment_date'])); ?>
+                                            <?php if($p['bank_name']): ?>
+                                                &bull; <?php echo htmlspecialchars($p['bank_name'] . ' - ' . $p['account_name']); ?>
+                                            <?php endif; ?>
+                                        </p>
                                     </div>
                                     <?php if($p['payment_type'] == 'Cheque'): ?>
                                     <div class="text-right">
-                                        <p class="text-[9px] font-black text-indigo-600 uppercase">CHQ: <?php echo $p['cheque_number']; ?></p>
-                                        <p class="text-[8px] font-bold text-slate-400">DUE: <?php echo date('M d', strtotime($p['due_date'])); ?></p>
+                                        <p class="text-[9px] font-black text-indigo-600 uppercase">CHQ: <?php echo $p['cheque_number']; ?><?php if($p['cheque_payer']): ?> &bull; <?php echo $p['cheque_payer']; ?><?php endif; ?></p>
                                     </div>
                                     <?php endif; ?>
                                 </div>
@@ -560,6 +597,10 @@ $pending_payment = $total_revenue - $total_paid;
                             <p class="text-lg font-black font-['Outfit'] <?php echo ($customer_pending > 0) ? 'text-yellow-300' : 'text-emerald-300'; ?>">LKR <?php echo number_format($customer_pending, 2); ?></p>
                         </div>
                     </div>
+                    <button onclick="deleteCustomerOrder(<?php echo $c['id']; ?>)" class="bg-rose-600/10 text-rose-400 hover:bg-rose-600 hover:text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all no-print flex items-center gap-2 border border-rose-500/20 shadow-lg shadow-rose-900/20">
+                        <i class="fa-solid fa-trash-can"></i>
+                        <span>Delete order</span>
+                    </button>
                 </div>
             </div>
             <?php endforeach; ?>
@@ -573,9 +614,9 @@ $pending_payment = $total_revenue - $total_paid;
                     <h3 class="text-xs font-black text-slate-500 uppercase tracking-widest print-label">Operational Expenses</h3>
                     <button onclick="openExpenseModal()" class="text-[9px] bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg font-black uppercase no-print">+ New Exp</button>
                 </div>
-                <div class="space-y-3 mb-6">
+                <div class="space-y-3 mb-6" id="expenses-list">
                     <?php if(empty($expenses)): ?>
-                        <p class="text-center text-xs text-slate-400 italic">Nil.</p>
+                        <p class="text-center text-xs text-slate-400 italic" id="nil-label">Nil.</p>
                     <?php endif; ?>
                     <?php foreach($expenses as $e): ?>
                     <div class="flex items-center justify-between p-3 bg-white/50 border border-slate-100 rounded-xl group print-pure-black">
@@ -591,6 +632,16 @@ $pending_payment = $total_revenue - $total_paid;
                         </div>
                     </div>
                     <?php endforeach; ?>
+                    
+                    <!-- Inline Form Row -->
+                    <form id="inline-expense-form" class="hidden animate-slide-up no-print p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl">
+                        <div class="flex items-center gap-2">
+                             <input type="text" name="name" required placeholder="Expense Name" class="input-glass flex-1 h-[36px] text-[10px]">
+                             <input type="number" name="amount" required step="0.01" placeholder="Amount" class="input-glass w-24 h-[36px] text-[10px]">
+                             <button type="submit" class="w-8 h-8 rounded-lg bg-slate-900 text-white flex items-center justify-center shadow-lg transition-all active:scale-90"><i class="fa-solid fa-check text-[10px]"></i></button>
+                             <button type="button" onclick="toggleExpenseForm()" class="w-8 h-8 rounded-lg bg-white border border-slate-200 text-slate-400 flex items-center justify-center transition-all active:scale-90"><i class="fa-solid fa-times text-[10px]"></i></button>
+                        </div>
+                    </form>
                 </div>
                 <div class="pt-5 border-t border-slate-100 flex items-center justify-between font-black">
                     <span class="text-[10px] text-slate-400 uppercase tracking-widest">Total Expenses</span>
@@ -656,23 +707,6 @@ $pending_payment = $total_revenue - $total_paid;
 
     <!-- Modals (Copied from nwdelivery functionality scope) -->
     
-    <!-- Expense Modal -->
-    <div id="expense-modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden no-print">
-        <div class="glass-card w-full max-w-md p-8 animate-slide-up shadow-2xl">
-            <h3 class="text-xl font-black text-slate-900 font-['Outfit'] mb-6">New Expenditure</h3>
-            <form id="expense-form" class="space-y-6">
-                <div>
-                    <label class="text-[10px] font-black text-slate-400 tracking-widest ml-1 mb-2 block">EXPENDITURE NAME</label>
-                    <input type="text" name="name" required placeholder="Fuel, Driver, etc." class="input-glass w-full h-[52px]">
-                </div>
-                <div>
-                    <label class="text-[10px] font-black text-slate-400 tracking-widest ml-1 mb-2 block">AMOUNT (LKR)</label>
-                    <input type="number" name="amount" required step="0.01" class="input-glass w-full h-[52px]">
-                </div>
-                <button type="submit" class="w-full bg-slate-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest">Save Expense</button>
-            </form>
-        </div>
-    </div>
 
     <!-- Payment Modal -->
     <div id="payment-modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden no-print">
@@ -738,13 +772,11 @@ $pending_payment = $total_revenue - $total_paid;
                     <div class="grid grid-cols-2 gap-6">
                         <div>
                             <label class="text-[10px] font-black text-slate-400 uppercase ml-1 mb-2 block">Cheque Number</label>
-                            <input type="text" name="chq_no" class="input-glass w-full h-[52px]">
+                            <input type="text" name="chq_no" class="input-glass w-full h-[52px]" placeholder="XXXXXX">
                         </div>
-                        <div class="relative">
-                            <label class="text-[10px] font-black text-slate-400 uppercase ml-1 mb-2 block">Cheque Customer</label>
-                            <input type="text" id="chq_cust_search" placeholder="Search Registry..." class="input-glass w-full h-[52px]" onkeyup="searchChequeCustomers(this.value)">
-                            <input type="hidden" name="chq_cust_id" id="selected_chq_cust_id">
-                            <div id="chq_cust_results" class="absolute w-full mt-1 bg-white border border-slate-100 rounded-xl shadow-2xl z-50 hidden"></div>
+                        <div>
+                            <label class="text-[10px] font-black text-slate-400 uppercase ml-1 mb-2 block">Cheque Payer</label>
+                            <input type="text" name="chq_payer" placeholder="Enter name (Optional)" class="input-glass w-full h-[52px]">
                         </div>
                     </div>
                 </div>
@@ -902,26 +934,13 @@ $pending_payment = $total_revenue - $total_paid;
                 });
         };
 
-        function searchChequeCustomers(term) {
-            if(term.length < 2) return document.getElementById('chq_cust_results').classList.add('hidden');
-            fetch(`?action=search_cheque_customer&id=<?php echo $id; ?>&term=${term}`)
-                .then(r => r.json()).then(data => {
-                    let html = '';
-                    data.forEach(c => {
-                        html += `<div class="p-3 hover:bg-slate-50 cursor-pointer text-xs font-bold" onclick="selectChqCust(${c.id}, '${c.name.replace(/'/g, "\\'")}')">${c.name}</div>`;
-                    });
-                    const res = document.getElementById('chq_cust_results'); res.innerHTML = html; res.classList.remove('hidden');
-                });
-        }
-        function selectChqCust(id, name) {
-            document.getElementById('selected_chq_cust_id').value = id;
-            document.getElementById('chq_cust_search').value = name;
-            document.getElementById('chq_cust_results').classList.add('hidden');
-        }
 
-        document.getElementById('expense-form').onsubmit = function(e) {
+
+        document.getElementById('inline-expense-form').onsubmit = function(e) {
             e.preventDefault();
-            fetch(`?action=add_expense&id=<?php echo $id; ?>`, { method: 'POST', body: new FormData(this) })
+            const fd = new FormData(this);
+            fd.append('action', 'add_expense');
+            fetch(`?id=<?php echo $id; ?>`, { method: 'POST', body: fd })
                 .then(r => r.json()).then(res => { if(res.success) location.reload(); });
         };
 
@@ -931,14 +950,24 @@ $pending_payment = $total_revenue - $total_paid;
                 .then(r => r.json()).then(res => { if(res.success) location.reload(); });
         };
 
-        function openExpenseModal() { openModal('expense-modal'); }
+        function toggleExpenseForm() {
+            const form = document.getElementById('inline-expense-form');
+            form.classList.toggle('hidden');
+            if(!form.classList.contains('hidden')) {
+                form.querySelector('[name="name"]').focus();
+            }
+        }
+        function openExpenseModal() { toggleExpenseForm(); }
         function openPaymentModal(dcId, name) {
             document.getElementById('payment_dc_id').value = dcId;
             document.getElementById('modal-cust-label').innerText = "Customer: " + name;
             document.getElementById('selected_bank_id').value = '';
             document.getElementById('bank_search').value = '';
-            document.getElementById('selected_chq_cust_id').value = '';
-            document.getElementById('chq_cust_search').value = '';
+            
+            const form = document.getElementById('payment-form');
+            if (form.querySelector('[name="chq_no"]')) form.querySelector('[name="chq_no"]').value = '';
+            if (form.querySelector('[name="chq_payer"]')) form.querySelector('[name="chq_payer"]').value = '';
+            
             selectPaymentMethod('Cash');
             openModal('payment-modal');
         }
@@ -950,6 +979,15 @@ $pending_payment = $total_revenue - $total_paid;
             };
             f.click();
         }
+        function deleteCustomerOrder(dcId) {
+            if(!confirm('Are you sure you want to remove this customer order? Items will be returned to stock and all associated records will be deleted.')) return;
+            fetch(`?action=delete_customer_order&id=<?php echo $id; ?>`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: `dc_id=${dcId}`
+            }).then(r => r.json()).then(res => { if(res.success) location.reload(); });
+        }
+
         function markPaymentDone(dcId) {
             if(!confirm('Mark as finished?')) return;
             fetch(`?action=mark_complete&id=<?php echo $id; ?>`, { method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: `dc_id=${dcId}` })

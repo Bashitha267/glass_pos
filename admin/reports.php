@@ -150,46 +150,99 @@ $stmtPayTypes = $pdo->prepare("
 $stmtPayTypes->execute($params);
 $pay_types_data = $stmtPayTypes->fetchAll(PDO::FETCH_ASSOC);
 
+// ── POS Sales Stats ───────────────────────────────────────────────────────────
+$posWhere = ["1=1"];
+$posParams = [];
+if ($start_date) { $posWhere[] = "ps.sale_date >= ?"; $posParams[] = $start_date; }
+if ($end_date)   { $posWhere[] = "ps.sale_date <= ?"; $posParams[] = $end_date; }
+if ($month && $year && !$start_date && !$end_date) {
+    $posWhere[] = "MONTH(ps.sale_date) = ? AND YEAR(ps.sale_date) = ?";
+    $posParams[] = $month; $posParams[] = $year;
+}
+$posWhereClause = implode(" AND ", $posWhere);
+
+$stmtPOSRev = $pdo->prepare("SELECT COALESCE(SUM(grand_total),0) FROM pos_sales ps WHERE $posWhereClause");
+$stmtPOSRev->execute($posParams);
+$pos_revenue = (float)$stmtPOSRev->fetchColumn();
+
+$stmtPOSCost = $pdo->prepare("SELECT COALESCE(SUM(psi.qty * psi.cost_price),0) FROM pos_sale_items psi JOIN pos_sales ps ON psi.sale_id=ps.id WHERE $posWhereClause");
+$stmtPOSCost->execute($posParams);
+$pos_cost = (float)$stmtPOSCost->fetchColumn();
+$pos_profit = $pos_revenue - $pos_cost;
+
+$stmtPOSItems = $pdo->prepare("
+    SELECT b.name as brand_name, SUM(psi.qty) as total_qty
+    FROM pos_sale_items psi
+    JOIN container_items ci ON psi.container_item_id=ci.id
+    JOIN brands b ON ci.brand_id=b.id
+    JOIN pos_sales ps ON psi.sale_id=ps.id
+    WHERE $posWhereClause
+    GROUP BY b.name ORDER BY total_qty DESC LIMIT 10");
+$stmtPOSItems->execute($posParams);
+$pos_items_data = $stmtPOSItems->fetchAll(PDO::FETCH_ASSOC);
+
+$stmtPOSPayTypes = $pdo->prepare("
+    SELECT payment_type, SUM(amount) as total_amount
+    FROM pos_sale_payments psp
+    JOIN pos_sales ps ON psp.sale_id=ps.id
+    WHERE $posWhereClause
+    GROUP BY payment_type");
+$stmtPOSPayTypes->execute($posParams);
+$pos_pay_types = $stmtPOSPayTypes->fetchAll(PDO::FETCH_ASSOC);
+// ─────────────────────────────────────────────────────────────────────────────
+
 if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename=business_report_' . date('Y-m-d') . '.csv');
     
     $output = fopen('php://output', 'w');
     
-    // Total Values
-    fputcsv($output, ['KEY METRICS', 'VALUES']);
+    // Delivery Metrics
+    fputcsv($output, ['DELIVERY KEY METRICS', 'VALUES']);
     fputcsv($output, ['Total Deliveries', $total_deliveries]);
     fputcsv($output, ['Unique Clients', $total_customers]);
     fputcsv($output, ['Total Sales Revenue (LKR)', number_format($total_earnings, 2, '.', '')]);
     fputcsv($output, ['Total Payments Got (LKR)', number_format($total_payments_got, 2, '.', '')]);
     fputcsv($output, ['Outstanding Balance (LKR)', number_format($pending_payments, 2, '.', '')]);
     fputcsv($output, ['Total Expenses (LKR)', number_format($total_expenses, 2, '.', '')]);
-    fputcsv($output, ['Operational Profit (LKR)', number_format($profit, 2, '.', '')]);
+    fputcsv($output, ['Delivery Profit (LKR)', number_format($profit, 2, '.', '')]);
     fputcsv($output, ['Employee Salary Payments (LKR)', number_format($total_emp_payments, 2, '.', '')]);
+    fputcsv($output, []);
+
+    // POS Metrics
+    fputcsv($output, ['POS SALES METRICS', 'VALUES']);
+    fputcsv($output, ['POS Revenue (LKR)', number_format($pos_revenue, 2, '.', '')]);
+    fputcsv($output, ['POS Profit (LKR)', number_format($pos_profit, 2, '.', '')]);
+    fputcsv($output, []);
+
+    // POS Most Sold
+    fputcsv($output, ['POS MOST SOLD ITEMS']);
+    fputcsv($output, ['Brand Name', 'Total Quantity']);
+    foreach ($pos_items_data as $i) { fputcsv($output, [$i['brand_name'], $i['total_qty']]); }
+    fputcsv($output, []);
+
+    // POS Payment Types
+    fputcsv($output, ['POS PAYMENT TYPES']);
+    fputcsv($output, ['Payment Type', 'Total Amount (LKR)']);
+    foreach ($pos_pay_types as $pt) { fputcsv($output, [$pt['payment_type'], number_format($pt['total_amount'], 2, '.', '')]); }
     fputcsv($output, []);
     
     // Bank Details
     fputcsv($output, ['BANK DETAILS']);
     fputcsv($output, ['Bank Name', 'Account Number', 'Total Payments Collected (LKR)']);
-    foreach ($banks_data as $b) {
-        fputcsv($output, [$b['bank_name'], $b['account_number'], number_format($b['total_amount'], 2, '.', '')]);
-    }
+    foreach ($banks_data as $b) { fputcsv($output, [$b['bank_name'], $b['account_number'], number_format($b['total_amount'], 2, '.', '')]); }
     fputcsv($output, []);
     
-    // Most Sold Items
-    fputcsv($output, ['MOST SOLD ITEMS']);
+    // Delivery Most Sold Items
+    fputcsv($output, ['DELIVERY MOST SOLD ITEMS']);
     fputcsv($output, ['Brand Name', 'Total Quantity (PKTS)']);
-    foreach ($items_data as $i) {
-        fputcsv($output, [$i['brand_name'], $i['total_qty']]);
-    }
+    foreach ($items_data as $i) { fputcsv($output, [$i['brand_name'], $i['total_qty']]); }
     fputcsv($output, []);
     
-    // Payment Types
-    fputcsv($output, ['PAYMENT TYPES']);
+    // Delivery Payment Types
+    fputcsv($output, ['DELIVERY PAYMENT TYPES']);
     fputcsv($output, ['Payment Type', 'Total Amount (LKR)']);
-    foreach ($pay_types_data as $pt) {
-        fputcsv($output, [$pt['payment_type'], number_format($pt['total_amount'], 2, '.', '')]);
-    }
+    foreach ($pay_types_data as $pt) { fputcsv($output, [$pt['payment_type'], number_format($pt['total_amount'], 2, '.', '')]); }
     
     fclose($output);
     exit;
@@ -392,15 +445,31 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
           
             </div>
 
-            <!-- Profit -->
+            <!-- Delivery Profit -->
             <div class="glass-card p-8 bg-gradient-to-br from-teal-500/10 to-transparent border-teal-200">
                 <div class="stat-icon bg-teal-100/50 text-teal-600 mb-4">
-                    <i class="fa-solid fa-sack-dollar text-2xl"></i>
+                    <i class="fa-solid fa-truck-ramp-box text-2xl"></i>
                 </div>
-                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">
-                     Profit</p>
+                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Delivery Profit</p>
                 <h2 class="text-3xl font-black text-teal-600 tracking-tighter">LKR <?php echo number_format($profit, 2); ?></h2>
-          
+            </div>
+
+            <!-- POS Revenue -->
+            <div class="glass-card p-8 bg-gradient-to-br from-violet-500/10 to-transparent border-violet-200">
+                <div class="stat-icon bg-violet-100/50 text-violet-600 mb-4">
+                    <i class="fa-solid fa-cash-register text-2xl"></i>
+                </div>
+                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">POS Sales Revenue</p>
+                <h2 class="text-3xl font-black text-violet-600 tracking-tighter">LKR <?php echo number_format($pos_revenue, 2); ?></h2>
+            </div>
+
+            <!-- POS Profit -->
+            <div class="glass-card p-8 bg-gradient-to-br from-fuchsia-500/10 to-transparent border-fuchsia-200">
+                <div class="stat-icon bg-fuchsia-100/50 text-fuchsia-600 mb-4">
+                    <i class="fa-solid fa-store text-2xl"></i>
+                </div>
+                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">POS Sales Profit</p>
+                <h2 class="text-3xl font-black text-fuchsia-600 tracking-tighter">LKR <?php echo number_format($pos_profit, 2); ?></h2>
             </div>
 
             <!-- Employee Payments -->
@@ -506,6 +575,53 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
                 </div>
             </div>
         </div>
+
+        <!-- POS Charts -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
+            <!-- POS Most Sold Items -->
+            <div class="glass-card p-8 h-full bg-slate-50 border-violet-200">
+                <div class="flex items-center justify-between mb-8">
+                    <div>
+                        <h3 class="text-xl font-black text-slate-900 font-['Outfit']">POS Top Items</h3>
+                        <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-1">Most Sold via Point of Sale</p>
+                    </div>
+                </div>
+                <div class="relative flex justify-center mb-8">
+                    <canvas id="posItemsChart" style="max-height: 250px; max-width: 250px;"></canvas>
+                </div>
+                <div class="space-y-3">
+                    <?php foreach($pos_items_data as $i): ?>
+                        <div class="flex items-center justify-between p-3 rounded-2xl bg-white border border-slate-100 shadow-sm">
+                            <span class="text-[11px] font-black text-slate-500 uppercase tracking-widest"><?php echo htmlspecialchars($i['brand_name']); ?></span>
+                            <span class="text-xs font-black text-slate-900"><?php echo number_format($i['total_qty']); ?> PKTS</span>
+                        </div>
+                    <?php endforeach; ?>
+                    <?php if(empty($pos_items_data)): ?><p class="text-center text-xs text-slate-400 italic py-6">No POS sales data yet.</p><?php endif; ?>
+                </div>
+            </div>
+
+            <!-- POS Payment Methods -->
+            <div class="glass-card p-8 h-full bg-slate-50 border-fuchsia-200">
+                <div class="flex items-center justify-between mb-8">
+                    <div>
+                        <h3 class="text-xl font-black text-slate-900 font-['Outfit']">POS Payment Methods</h3>
+                        <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-1">Payment Breakdown for POS Sales</p>
+                    </div>
+                </div>
+                <div class="relative flex justify-center mb-8">
+                    <canvas id="posPayChart" style="max-height: 250px; max-width: 250px;"></canvas>
+                </div>
+                <div class="space-y-3 mt-4">
+                    <?php foreach($pos_pay_types as $pt): ?>
+                        <div class="flex items-center justify-between p-3 rounded-2xl bg-white border border-slate-100 shadow-sm">
+                            <span class="text-[11px] font-black text-slate-500 uppercase tracking-widest"><?php echo htmlspecialchars($pt['payment_type']); ?></span>
+                            <span class="text-xs font-black text-slate-900">LKR <?php echo number_format($pt['total_amount'], 2); ?></span>
+                        </div>
+                    <?php endforeach; ?>
+                    <?php if(empty($pos_pay_types)): ?><p class="text-center text-xs text-slate-400 italic py-6">No POS payment data yet.</p><?php endif; ?>
+                </div>
+            </div>
+        </div>
     </main>
 
     <script>
@@ -594,6 +710,32 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
                 cutout: '75%'
             }
         });
+    </script>
+    <script>
+        // POS Items Chart
+        const posItemsData = <?php echo json_encode($pos_items_data); ?>;
+        if (posItemsData.length > 0) {
+            new Chart(document.getElementById('posItemsChart'), {
+                type: 'doughnut',
+                data: {
+                    labels: posItemsData.map(i => i.brand_name),
+                    datasets: [{ data: posItemsData.map(i => i.total_qty), backgroundColor: ['#7c3aed','#a78bfa','#c4b5fd','#8b5cf6','#6d28d9','#ddd6fe','#4c1d95','#ede9fe','#5b21b6','#764ba2'], borderWidth: 0, hoverOffset: 20 }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { padding: 15, backgroundColor: 'rgba(15,23,42,0.95)', cornerRadius: 12 } }, cutout: '75%' }
+            });
+        }
+        // POS Payment Types Chart
+        const posPayData = <?php echo json_encode($pos_pay_types); ?>;
+        if (posPayData.length > 0) {
+            new Chart(document.getElementById('posPayChart'), {
+                type: 'doughnut',
+                data: {
+                    labels: posPayData.map(i => i.payment_type),
+                    datasets: [{ data: posPayData.map(i => i.total_amount), backgroundColor: ['#c026d3','#a21caf','#86198f','#6b21a8','#ec4899'], borderWidth: 0, hoverOffset: 20 }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { padding: 15, backgroundColor: 'rgba(15,23,42,0.95)', cornerRadius: 12, callbacks: { label: function(ctx) { return ctx.label + ': LKR ' + parseFloat(ctx.parsed).toLocaleString('en-LK', {minimumFractionDigits:2}); } } } }, cutout: '75%' }
+            });
+        }
     </script>
 </body>
 </html>
