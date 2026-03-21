@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS delivery_customers (
     discount DECIMAL(15, 2) DEFAULT 0.00,
     status ENUM('pending', 'delivered') DEFAULT 'pending',
     payment_status ENUM('pending', 'completed') DEFAULT 'pending',
+    bill_number VARCHAR(50) DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (delivery_id) REFERENCES deliveries(id) ON DELETE CASCADE,
     FOREIGN KEY (customer_id) REFERENCES customers(id)

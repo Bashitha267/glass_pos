@@ -397,8 +397,20 @@ $user_list = $users->fetchAll();
         function toggleCredentialFields() {
             const role = document.getElementById('role').value;
             const fields = document.getElementById('credential-fields');
-            if(role === 'admin') fields.classList.remove('hidden');
-            else fields.classList.add('hidden');
+            const usernameInput = document.getElementById('username_input');
+            const passwordInput = document.getElementById('password');
+            const isEdit = document.getElementById('user_id').value !== '';
+
+            if (role === 'admin') {
+                fields.classList.remove('hidden');
+                usernameInput.required = true;
+                // Password required only for new administrators
+                passwordInput.required = !isEdit;
+            } else {
+                fields.classList.add('hidden');
+                usernameInput.required = false;
+                passwordInput.required = false;
+            }
         }
         
         function openModal(defaultRole = 'employee') {
@@ -409,7 +421,6 @@ $user_list = $users->fetchAll();
             document.getElementById('modal-title').innerText = "Staff Enrollment";
             document.getElementById('role').value = defaultRole;
             toggleCredentialFields();
-            document.getElementById('password').required = (defaultRole === 'admin');
             modal.classList.remove('hidden');
         }
 
@@ -451,7 +462,6 @@ $user_list = $users->fetchAll();
                         }
                         
                         toggleCredentialFields();
-                        document.getElementById('password').required = false;
                         document.getElementById('modal-title').innerText = "Update Record";
                         modal.classList.remove('hidden');
                     }

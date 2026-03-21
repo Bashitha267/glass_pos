@@ -154,11 +154,11 @@ if ($action == 'save_delivery') {
             $dc_id = $c['dc_id'] ?? null;
             
             if ($dc_id) {
-                $pdo->prepare("UPDATE delivery_customers SET customer_id = ?, subtotal = 0.00, discount = 0.00 WHERE id = ?")
-                    ->execute([$c['customer_id'], $dc_id]);
+                $pdo->prepare("UPDATE delivery_customers SET customer_id = ?, subtotal = 0.00, discount = 0.00, bill_number = ? WHERE id = ?")
+                    ->execute([$c['customer_id'], $c['bill_number'] ?? null, $dc_id]);
             } else {
-                $stmt = $pdo->prepare("INSERT INTO delivery_customers (delivery_id, customer_id, subtotal, discount) VALUES (?, ?, 0.00, 0.00)");
-                $stmt->execute([$delivery_id, $c['customer_id']]);
+                $stmt = $pdo->prepare("INSERT INTO delivery_customers (delivery_id, customer_id, subtotal, discount, bill_number) VALUES (?, ?, 0.00, 0.00, ?)");
+                $stmt->execute([$delivery_id, $c['customer_id'], $c['bill_number'] ?? null]);
                 $dc_id = $pdo->lastInsertId();
             }
 
@@ -231,7 +231,7 @@ if ($action == 'view_delivery') {
         $exps->execute([$id]);
         $delivery['expenses'] = $exps->fetchAll(PDO::FETCH_ASSOC);
 
-        $custs = $pdo->prepare("SELECT dc.id, dc.customer_id, dc.subtotal, dc.discount, dc.status, dc.payment_status, c.name, c.contact_number, c.address FROM delivery_customers dc JOIN customers c ON dc.customer_id = c.id WHERE dc.delivery_id = ? ORDER BY dc.id");
+        $custs = $pdo->prepare("SELECT dc.id, dc.customer_id, dc.bill_number, dc.subtotal, dc.discount, dc.status, dc.payment_status, c.name, c.contact_number, c.address FROM delivery_customers dc JOIN customers c ON dc.customer_id = c.id WHERE dc.delivery_id = ? ORDER BY dc.id");
         $custs->execute([$id]);
         $custRows = $custs->fetchAll(PDO::FETCH_ASSOC);
 
@@ -400,7 +400,12 @@ $limit = 8;
 $offset = ($page - 1) * $limit;
 $where = [];
 $params = [];
-if ($search) { $where[] = "d.id LIKE ?"; $params[] = "%$search%"; }
+if ($search) { 
+    $where[] = "(d.id LIKE ? OR EXISTS (SELECT 1 FROM delivery_customers dc JOIN customers c ON dc.customer_id = c.id WHERE dc.delivery_id = d.id AND (dc.bill_number LIKE ? OR c.name LIKE ?)))"; 
+    $params[] = "%$search%"; 
+    $params[] = "%$search%"; 
+    $params[] = "%$search%"; 
+}
 if ($start_date) { $where[] = "d.delivery_date >= ?"; $params[] = $start_date; }
 if ($end_date) { $where[] = "d.delivery_date <= ?"; $params[] = $end_date; }
 $whereClause = $where ? "WHERE " . implode(" AND ", $where) : "";
@@ -558,8 +563,8 @@ $deliveries = $stmt->fetchAll();
         <div class="glass-card p-6 mb-8 border-slate-200/50">
             <form method="GET" class="grid grid-cols-1 md:grid-cols-12 gap-6 items-end" id="filterForm">
                 <div class="md:col-span-5 relative">
-                    <label class="text-[10px] uppercase font-black text-slate-600 mb-2 ml-1 block tracking-widest">Search ID</label>
-                    <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="Enter Trip ID..." class="input-glass w-full h-[48px]" onchange="this.form.submit()">
+                    <label class="text-[10px] uppercase font-black text-slate-600 mb-2 ml-1 block tracking-widest">Search (Trip ID, Customer, Bill No)</label>
+                    <input type="text" name="search" id="mainSearch" value="<?php echo htmlspecialchars($search); ?>" placeholder="Enter Trip ID, Customer or Bill No..." class="input-glass w-full h-[48px]" oninput="debounceSearch()">
                 </div>
                 <div class="md:col-span-2">
                     <label class="text-[10px] uppercase font-black text-slate-600 mb-2 ml-1 block tracking-widest">Start Date</label>
@@ -1060,6 +1065,8 @@ $deliveries = $stmt->fetchAll();
                                         const elDiscount = row.querySelector('.item-discount'); if(elDiscount) elDiscount.value = item.discount_amount || 0;
                                         const elCost = row.querySelector('.cost-price'); if(elCost) elCost.value = item.cost_price || 0;
                                         
+                                        const elBillNo = block.querySelector('.bill-number'); if(elBillNo) elBillNo.value = c.bill_number || '';
+                                        
                                         const stockDiv = row.querySelector('.stock-info');
                                         if(stockDiv) {
                                             const bgs = stockDiv.querySelectorAll('span');
@@ -1240,6 +1247,9 @@ $deliveries = $stmt->fetchAll();
                             </div>
                             <div class="flex-1 min-w-0">
                                 <input type="text" placeholder="Search or assign customer..." class="input-glass w-full h-[46px] text-sm font-bold cust-search" onkeyup="searchCustomers(this.value, '${id}')">
+                            </div>
+                            <div class="w-1/4">
+                                <input type="text" placeholder="Bill No" class="input-glass w-full h-[46px] text-sm font-bold bill-number" title="Bill Number (Optional)">
                             </div>
                         </div>
                         
@@ -1618,10 +1628,11 @@ $deliveries = $stmt->fetchAll();
                     if(iid && q && p) items.push({item_id: iid, qty: q, selling_price: p, cost_price: cp, damaged_qty: dmg, discount: disc});
                 });
                 
+                const billNo = b.querySelector('.bill-number').value;
                 const existingBills = b.dataset.existingBills ? JSON.parse(b.dataset.existingBills) : [];
                 
                 if(cid && items.length) {
-                    custs.push({dc_id: dcId, customer_id: cid, items, existing_bills: existingBills});
+                    custs.push({dc_id: dcId, customer_id: cid, items, existing_bills: existingBills, bill_number: billNo});
                 }
             });
 
@@ -1952,6 +1963,14 @@ $deliveries = $stmt->fetchAll();
                         else alert(res.message);
                     });
             }
+        }
+
+        let searchTimer;
+        function debounceSearch() {
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(() => {
+                document.getElementById('filterForm').submit();
+            }, 500);
         }
 
         // Track changes globally

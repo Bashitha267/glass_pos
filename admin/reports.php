@@ -111,8 +111,8 @@ $total_emp_payments = (float)$stmtEmpPay->fetchColumn();
 // Include container costs in Total Expenses
 $total_expenses += $total_cost;
 
-// Calculate True Profit
-$profit = $total_earnings - $total_expenses - $total_emp_payments;
+// Calculate Delivery Profit (excluding employee salaries)
+$profit = $total_earnings - $total_expenses;
 
 // NEW 9. Total Payments Received
 $stmtTotalPayments = $pdo->prepare("
@@ -170,6 +170,9 @@ $stmtPOSCost->execute($posParams);
 $pos_cost = (float)$stmtPOSCost->fetchColumn();
 $pos_profit = $pos_revenue - $pos_cost;
 
+// Calculate Overall Final Business Profit
+$total_business_profit = $profit + $pos_profit - $total_emp_payments;
+
 $stmtPOSItems = $pdo->prepare("
     SELECT b.name as brand_name, SUM(psi.qty) as total_qty
     FROM pos_sale_items psi
@@ -206,6 +209,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
     fputcsv($output, ['Outstanding Balance (LKR)', number_format($pending_payments, 2, '.', '')]);
     fputcsv($output, ['Total Expenses (LKR)', number_format($total_expenses, 2, '.', '')]);
     fputcsv($output, ['Delivery Profit (LKR)', number_format($profit, 2, '.', '')]);
+    fputcsv($output, ['Total Business Profit (LKR)', number_format($total_business_profit, 2, '.', '')]);
     fputcsv($output, ['Employee Salary Payments (LKR)', number_format($total_emp_payments, 2, '.', '')]);
     fputcsv($output, []);
 
@@ -243,6 +247,15 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
     fputcsv($output, ['DELIVERY PAYMENT TYPES']);
     fputcsv($output, ['Payment Type', 'Total Amount (LKR)']);
     foreach ($pay_types_data as $pt) { fputcsv($output, [$pt['payment_type'], number_format($pt['total_amount'], 2, '.', '')]); }
+    fputcsv($output, []);
+    
+    // Final Summary
+    fputcsv($output, ['OVERALL BUSINESS PERFORMANCE', 'VALUES']);
+    fputcsv($output, ['DELIVERY PROFIT', number_format($profit, 2, '.', '')]);
+    fputcsv($output, ['POS SALES PROFIT', number_format($pos_profit, 2, '.', '')]);
+    fputcsv($output, ['EMPLOYEE SALARY PAYMENTS', number_format($total_emp_payments, 2, '.', '')]);
+    fputcsv($output, ['--------------------------', '----------']);
+    fputcsv($output, ['TOTAL CONSOLIDATED BUSINESS PROFIT', number_format($total_business_profit, 2, '.', '')]);
     
     fclose($output);
     exit;
@@ -283,8 +296,6 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
         }
 
         .glass-card:hover {
-            transform: translateY(-5px);
-            background: white;
             box-shadow: 0 20px 40px -10px rgba(0,0,0,0.08);
         }
 
@@ -459,7 +470,14 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
                 <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Delivery Profit</p>
                 <h2 class="text-3xl font-black text-teal-600 tracking-tighter">LKR <?php echo number_format($profit, 2); ?></h2>
             </div>
-
+            <div class="glass-card p-8 bg-gradient-to-br from-amber-500/10 to-transparent border-amber-200">
+                <div class="stat-icon bg-amber-100/50 text-amber-600 mb-4">
+                    <i class="fa-solid fa-money-check-dollar text-2xl"></i>
+                </div>
+                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Employee Salary Payments</p>
+                <h2 class="text-3xl font-black text-amber-600 tracking-tighter">LKR <?php echo number_format($total_emp_payments, 2); ?></h2>
+          
+            </div>                 
             <!-- POS Sales Reports Heading -->
             <div class="col-span-full mt-4 mb-2">
                 <h2 class="text-xl font-black text-slate-900 font-['Outfit'] tracking-tight flex items-center gap-3">
@@ -486,15 +504,17 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
                 <h2 class="text-3xl font-black text-fuchsia-600 tracking-tighter">LKR <?php echo number_format($pos_profit, 2); ?></h2>
             </div>
 
-            <!-- Employee Payments -->
-            <div class="glass-card p-8 bg-gradient-to-br from-amber-500/10 to-transparent border-amber-200">
-                <div class="stat-icon bg-amber-100/50 text-amber-600 mb-4">
-                    <i class="fa-solid fa-money-check-dollar text-2xl"></i>
+            <!-- TOTAL BUSINESS PROFIT -->
+            <div class="glass-card p-8 bg-slate-900 border-slate-700 text-white shadow-2xl">
+                <div class="stat-icon bg-white/10 text-white mb-4">
+                    <i class="fa-solid fa-vault text-2xl"></i>
                 </div>
-                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Employee Salary Payments</p>
-                <h2 class="text-3xl font-black text-amber-600 tracking-tighter">LKR <?php echo number_format($total_emp_payments, 2); ?></h2>
-          
+                <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Business Profit</p>
+                <h2 class="text-3xl font-black text-white tracking-tighter">LKR <?php echo number_format($total_business_profit, 2); ?></h2>
+                <p class="text-[9px] text-slate-400 mt-2 font-medium italic">(Delivery + POS - Salaries)</p>
             </div>
+
+       
         </div>
 
         <div class="mb-10">
@@ -506,37 +526,40 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
                     </div>
                 </div>
                 <div class="overflow-x-auto">
-                    <table class="w-full text-left">
+                    <table class="w-full text-left border-separate border-spacing-y-1">
                         <thead>
-                            <tr class="text-[10px] uppercase font-black tracking-widest text-slate-400 border-b border-slate-100">
-                                <th class="pb-4 px-4">Bank Name</th>
-                                <th class="pb-4 px-4">Account Details</th>
-                                <th class="pb-4 px-4 text-right">Total Payments Collected</th>
+                            <tr class="text-[10px] uppercase font-black tracking-widest text-slate-600 bg-slate-100/80 rounded-xl overflow-hidden">
+                                <th class="py-3 px-5 rounded-l-xl">Bank Name</th>
+                                <th class="py-3 px-5">Account Details</th>
+                                <th class="py-3 px-5 text-right rounded-r-xl">Total Payments Collected</th>
                             </tr>
                         </thead>
-                        <tbody class="divide-y divide-slate-50">
+                        <tbody>
                             <?php foreach($banks_data as $b): ?>
-                                <tr class="hover:bg-slate-50/50 transition-colors">
-                                    <td class="py-4 px-4 h-[60px]">
-                                        <div class="flex items-center space-x-3">
-                                            <div class="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600 border border-indigo-100">
-                                                <i class="fa-solid fa-building-columns text-xs"></i>
+                                <tr class="bg-white/40 hover:bg-indigo-50/50 transition-colors group">
+                                    <td class="py-4 px-5 rounded-l-xl border-y border-l border-transparent group-hover:border-indigo-100">
+                                        <div class="flex items-center space-x-4">
+                                            <div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 border border-indigo-100 shadow-sm group-hover:bg-indigo-600 group-hover:text-white transition-all">
+                                                <i class="fa-solid fa-building-columns text-sm"></i>
                                             </div>
-                                            <span class="text-xs font-bold text-slate-700 uppercase tracking-tight"><?php echo htmlspecialchars($b['bank_name']); ?></span>
+                                            <span class="text-xs font-black text-slate-700 uppercase tracking-tight"><?php echo htmlspecialchars($b['bank_name']); ?></span>
                                         </div>
                                     </td>
-                                    <td class="py-4 px-4">
+                                    <td class="py-4 px-5 border-y border-transparent group-hover:border-indigo-100">
                                         <span class="text-xs font-black text-slate-500 uppercase tracking-[0.1em]"><?php echo htmlspecialchars($b['account_number']); ?></span>
                                     </td>
-                                    <td class="py-4 px-4 text-right">
+                                    <td class="py-4 px-5 text-right rounded-r-xl border-y border-r border-transparent group-hover:border-indigo-100">
                                         <span class="text-sm font-black text-slate-900">LKR <?php echo number_format($b['total_amount'], 2); ?></span>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
                             <?php if (empty($banks_data)): ?>
                                 <tr>
-                                    <td colspan="3" class="py-10 text-center text-slate-400 font-bold text-xs uppercase tracking-widest italic">
-                                        No bank payment collections found.
+                                    <td colspan="3" class="py-12 text-center text-slate-400 font-bold text-[10px] uppercase tracking-widest italic bg-white/20 rounded-2xl">
+                                        <div class="flex flex-col items-center gap-2">
+                                            <i class="fa-solid fa-folder-open text-2xl opacity-20"></i>
+                                            No bank payment collections found.
+                                        </div>
                                     </td>
                                 </tr>
                             <?php endif; ?>

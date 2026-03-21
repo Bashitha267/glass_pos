@@ -455,8 +455,11 @@ $containers = $stmt->fetchAll();
                             <td colspan="11" class="px-6 py-10 text-center text-slate-500 italic">No records found matching your criteria.</td>
                         </tr>
                         <?php endif; ?>
-                        <?php foreach ($containers as $c): ?>
-                        <tr class="odd:bg-gray-50/40 even:bg-gray-100/40 hover:bg-cyan-500/5 transition-colors">
+                        <?php foreach ($containers as $c): 
+                            $isFullyPaid = ($c['total_paid'] >= $c['total_expenses'] && $c['total_expenses'] > 0);
+                            $rowClass = $isFullyPaid ? 'bg-green-100 hover:bg-green-200' : 'odd:bg-gray-50/40 even:bg-gray-100/40 hover:bg-cyan-500/5';
+                        ?>
+                        <tr class="<?php echo $rowClass; ?> transition-colors">
                             <td class="px-3 py-4 text-sm font-bold text-cyan-600 whitespace-nowrap"><?php echo htmlspecialchars($c['container_number']); ?></td>
                             <td class="px-3 py-4 text-sm font-bold text-slate-800"><?php echo htmlspecialchars($c['brand_name'] ?? '-'); ?></td>
                             <td class="px-3 py-4 text-sm font-medium text-slate-500"><?php echo htmlspecialchars($c['country'] ?? '-'); ?></td>

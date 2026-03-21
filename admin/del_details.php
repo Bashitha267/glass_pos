@@ -474,28 +474,28 @@ $pending_payment = $total_revenue - $total_paid;
                             <h4 class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Product Details</h4>
                             <button onclick="uploadBill(<?php echo $c['id']; ?>)" class="text-[8px] bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg font-black uppercase tracking-widest">Change Digital Bill</button>
                         </div>
-                        <table class="w-full text-sm print-table">
+                        <table class="w-full text-sm print-table border-separate border-spacing-y-1">
                             <thead>
-                                <tr class="text-[10px] uppercase font-black text-slate-400 border-b border-slate-100 print-pure-black">
-                                    <th class="py-2 px-2">Brand / Product</th>
-                                    <th class="py-2 px-2">Container</th>
-                                    <th class="py-2 px-2 text-center">Qty</th>
-                                    <th class="py-2 px-2 text-center text-rose-600">Dmg</th>
-                                    <th class="py-2 px-2 text-right">Unit Price</th>
-                                    <th class="py-2 px-2 text-right">Line Total</th>
+                                <tr class="text-[10px] uppercase font-black text-slate-600 bg-slate-100/80 rounded-xl overflow-hidden print-pure-black">
+                                    <th class="py-3 px-4 rounded-l-xl">Brand / Product</th>
+                                    <th class="py-3 px-2">Container</th>
+                                    <th class="py-3 px-2 text-center">Qty</th>
+                                    <th class="py-3 px-2 text-center text-rose-600">Dmg</th>
+                                    <th class="py-3 px-2 text-right">Unit Price</th>
+                                    <th class="py-3 px-4 text-right rounded-r-xl">Line Total</th>
                                 </tr>
                             </thead>
-                            <tbody class="divide-y divide-slate-50">
+                            <tbody>
                                 <?php foreach($c['items'] as $item): ?>
-                                <tr class="print-pure-black">
-                                    <td class="py-4 px-2 font-black text-slate-800"><?php echo $item['brand_name']; ?></td>
-                                    <td class="py-4 px-2 font-bold text-slate-500 text-[10px]"><?php echo $item['container_number']; ?></td>
-                                    <td class="py-4 px-2 text-center font-black"><?php echo $item['qty']; ?></td>
-                                    <td class="py-4 px-2 text-center">
+                                <tr class="print-pure-black bg-white/40 hover:bg-indigo-50/50 transition-colors group">
+                                    <td class="py-4 px-4 font-black text-slate-800 rounded-l-xl border-l border-y border-transparent group-hover:border-indigo-100"><?php echo $item['brand_name']; ?></td>
+                                    <td class="py-4 px-2 font-bold text-slate-500 text-[10px] border-y border-transparent group-hover:border-indigo-100"><?php echo $item['container_number']; ?></td>
+                                    <td class="py-4 px-2 text-center font-black border-y border-transparent group-hover:border-indigo-100"><?php echo $item['qty']; ?></td>
+                                    <td class="py-4 px-2 text-center border-y border-transparent group-hover:border-indigo-100">
                                         <input type="number" value="<?php echo $item['damaged_qty']; ?>" class="w-12 h-8 text-center bg-transparent border-0 font-bold focus:ring-0" onchange="updateDamage(<?php echo $item['id']; ?>, this.value)">
                                     </td>
-                                    <td class="py-4 px-2 text-right font-bold text-slate-600">LKR <?php echo number_format($item['selling_price'], 2); ?></td>
-                                    <td class="py-4 px-2 text-right font-black text-slate-900">LKR <?php echo number_format($item['total'], 2); ?></td>
+                                    <td class="py-4 px-2 text-right font-bold text-slate-600 border-y border-transparent group-hover:border-indigo-100">LKR <?php echo number_format($item['selling_price'], 2); ?></td>
+                                    <td class="py-4 px-4 text-right font-black text-slate-900 rounded-r-xl border-r border-y border-transparent group-hover:border-indigo-100">LKR <?php echo number_format($item['total'], 2); ?></td>
                                 </tr>
                                 <?php endforeach; ?>
                             </tbody>

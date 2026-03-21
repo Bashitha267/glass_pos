@@ -121,10 +121,11 @@ if ($action == 'live_search') {
         $s = "%$search%";
         $where[] = "(c.name LIKE ? 
                     OR CAST(dc.delivery_id AS CHAR) LIKE ? 
+                    OR dc.bill_number LIKE ? 
                     OR CONCAT('DEL-', LPAD(dc.delivery_id, 4, '0')) LIKE ? 
                     OR CONCAT('#DEL-', LPAD(dc.delivery_id, 4, '0')) LIKE ? 
                     OR EXISTS (SELECT 1 FROM delivery_payments dp WHERE dp.delivery_customer_id = dc.id AND dp.cheque_number LIKE ?))";
-        $params = array_merge($params, [$s, $s, $s, $s, $s]);
+        $params = array_merge($params, [$s, $s, $s, $s, $s, $s]);
     }
     if ($start_date) { $where[] = "d.delivery_date >= ?"; $params[] = $start_date; }
     if ($end_date) { $where[] = "d.delivery_date <= ?"; $params[] = $end_date; }
@@ -185,10 +186,11 @@ if ($search) {
     $s = "%$search%";
     $where[] = "(c.name LIKE ? 
                 OR CAST(dc.delivery_id AS CHAR) LIKE ? 
+                OR dc.bill_number LIKE ? 
                 OR CONCAT('DEL-', LPAD(dc.delivery_id, 4, '0')) LIKE ? 
                 OR CONCAT('#DEL-', LPAD(dc.delivery_id, 4, '0')) LIKE ? 
                 OR EXISTS (SELECT 1 FROM delivery_payments dp WHERE dp.delivery_customer_id = dc.id AND dp.cheque_number LIKE ?))";
-    $params = array_merge($params, [$s, $s, $s, $s, $s]);
+    $params = array_merge($params, [$s, $s, $s, $s, $s, $s]);
 }
 
 if ($start_date) {
@@ -457,6 +459,7 @@ $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <thead>
                         <tr class="table-header">
                             <th class="px-6 py-4">Trip ID</th>
+                            <th class="px-6 py-4">Bill Number</th>
                             <th class="px-6 py-4">Customer Name</th>
                             <th class="px-6 py-4">Total Amount</th>
                             <th class="px-6 py-4 text-emerald-500">Paid</th>
@@ -478,6 +481,9 @@ $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         <tr class="hover:bg-slate-50/50 transition-colors">
                             <td class="px-6 py-4">
                                 <span class="bg-indigo-50 text-indigo-700 px-3 py-1 rounded-lg text-[10px] font-black uppercase ring-1 ring-indigo-100">#DEL-<?php echo str_pad($r['delivery_id'], 4, '0', STR_PAD_LEFT); ?></span>
+                            </td>
+                            <td class="px-6 py-4">
+                                <p class="text-sm font-black text-slate-800 uppercase tracking-tight"><?php echo htmlspecialchars($r['bill_number'] ?: 'N/A'); ?></p>
                             </td>
                             <td class="px-6 py-4">
                                 <p class="text-sm font-black text-slate-800 uppercase tracking-tight"><?php echo htmlspecialchars($r['customer_name']); ?></p>
@@ -919,6 +925,9 @@ $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                 <tr class="hover:bg-slate-50/50 transition-colors">
                                     <td class="px-6 py-4">
                                         <span class="bg-indigo-50 text-indigo-700 px-3 py-1 rounded-lg text-[10px] font-black uppercase ring-1 ring-indigo-100">#DEL-${tripId}</span>
+                                    </td>
+                                    <td class="px-6 py-4">
+                                        <p class="text-sm font-black text-slate-800 uppercase tracking-tight">${r.bill_number || 'N/A'}</p>
                                     </td>
                                     <td class="px-6 py-4">
                                         <p class="text-sm font-black text-slate-800 uppercase tracking-tight">${r.customer_name}</p>
