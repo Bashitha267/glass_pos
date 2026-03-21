@@ -34,6 +34,96 @@ if ($action === 'get_items') {
     exit;
 }
 
+// ── Payment Handlers (Synced with managePayments.php) ────────────────────────
+if ($action == 'search_bank') {
+    $term = '%' . $_GET['term'] . '%';
+    $stmt = $pdo->prepare("SELECT * FROM banks WHERE name LIKE ? LIMIT 5");
+    $stmt->execute([$term]);
+    echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+    exit;
+}
+
+if ($action == 'create_bank') {
+    $name = $_POST['name'];
+    $acc_no = $_POST['acc_no'];
+    $acc_name = $_POST['acc_name'];
+    $stmt = $pdo->prepare("INSERT INTO banks (name, account_number, account_name) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE account_number=?, account_name=?");
+    $stmt->execute([$name, $acc_no, $acc_name, $acc_no, $acc_name]);
+    echo json_encode(['success' => true, 'id' => $pdo->lastInsertId() ?: $pdo->query("SELECT id FROM banks WHERE name='$name'")->fetchColumn(), 'name' => $name]);
+    exit;
+}
+
+if ($action == 'save_payment') {
+    try {
+        $sale_id = $_POST['sale_id'];
+        $type = $_POST['type'];
+        $amount = (float)$_POST['amount'];
+        $date = $_POST['date'];
+        $bank_id = !empty($_POST['bank_id']) ? $_POST['bank_id'] : null;
+        $chq_no = $_POST['chq_no'] ?: null;
+        $chq_payer = $_POST['chq_payer'] ?: null;
+        
+        $proof = null;
+        if (isset($_FILES['proof']) && $_FILES['proof']['error'] == 0) {
+            $proof = time() . '_' . $_FILES['proof']['name'];
+            if (!is_dir('../uploads/payments')) mkdir('../uploads/payments', 0777, true);
+            move_uploaded_file($_FILES['proof']['tmp_name'], '../uploads/payments/' . $proof);
+        }
+
+        $stmt = $pdo->prepare("INSERT INTO pos_sale_payments (sale_id, amount, payment_type, bank_id, cheque_number, proof_image, payment_date, cheque_payer_name, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt->execute([$sale_id, $amount, $type, $bank_id, $chq_no, $proof, $date, $chq_payer, $user_id]);
+        
+        // Update payment status
+        $stmtStatus = $pdo->prepare("SELECT grand_total, (SELECT SUM(amount) FROM pos_sale_payments WHERE sale_id = ps.id) as total_paid FROM pos_sales ps WHERE ps.id = ?");
+        $stmtStatus->execute([$sale_id]);
+        $status = $stmtStatus->fetch();
+        if ($status) {
+            $new_status = ($status['total_paid'] >= $status['grand_total']) ? 'completed' : 'pending';
+            $pdo->prepare("UPDATE pos_sales SET payment_status = ? WHERE id = ?")->execute([$new_status, $sale_id]);
+        }
+        echo json_encode(['success' => true]);
+    } catch (Exception $e) { echo json_encode(['success' => false, 'message' => $e->getMessage()]); }
+    exit;
+}
+
+if ($action == 'get_history') {
+    $sale_id = (int)$_GET['sale_id'];
+    $stmt = $pdo->prepare("
+        SELECT psp.*, b.name as bank_name, b.account_number as bank_acc, psp.cheque_payer_name as cheque_payer 
+        FROM pos_sale_payments psp 
+        LEFT JOIN banks b ON psp.bank_id = b.id 
+        WHERE psp.sale_id = ? 
+        ORDER BY psp.payment_date DESC
+    ");
+    $stmt->execute([$sale_id]);
+    echo json_encode(['success' => true, 'data' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+    exit;
+}
+
+if ($action == 'delete_payment') {
+    try {
+        $pay_id = (int)$_POST['id'];
+        $stmt = $pdo->prepare("SELECT sale_id FROM pos_sale_payments WHERE id = ?");
+        $stmt->execute([$pay_id]);
+        $pay = $stmt->fetch();
+        if (!$pay) throw new Exception("Payment not found");
+        
+        $sale_id = $pay['sale_id'];
+        $pdo->prepare("DELETE FROM pos_sale_payments WHERE id = ?")->execute([$pay_id]);
+        
+        // Update status
+        $stmtStatus = $pdo->prepare("SELECT grand_total, (SELECT SUM(amount) FROM pos_sale_payments WHERE sale_id = ps.id) as total_paid FROM pos_sales ps WHERE ps.id = ?");
+        $stmtStatus->execute([$sale_id]);
+        $status = $stmtStatus->fetch();
+        if ($status) {
+            $new_status = ($status['total_paid'] >= $status['grand_total']) ? 'completed' : 'pending';
+            $pdo->prepare("UPDATE pos_sales SET payment_status = ? WHERE id = ?")->execute([$new_status, $sale_id]);
+        }
+        echo json_encode(['success' => true]);
+    } catch (Exception $e) { echo json_encode(['success' => false, 'message' => $e->getMessage()]); }
+    exit;
+}
+
 // ── Filters ───────────────────────────────────────────────────────────────────
 $search     = trim($_GET['search'] ?? '');
 $start_date = $_GET['start_date'] ?? date('Y-m-d');
@@ -201,7 +291,8 @@ $profit  = $revenue - (float)$stats['cost'];
                         <th class="px-4 py-3.5">Contact</th>
                         <th class="px-4 py-3.5">Discount</th>
                         <th class="px-4 py-3.5">Bill Total</th>
-                        <th class="px-4 py-3.5">Payment</th>
+                        <th class="px-4 py-3.5 text-emerald-600">Paid</th>
+                        <th class="px-4 py-3.5 text-rose-500">Pending</th>
                         <th class="px-4 py-3.5 text-center">Status</th>
                         <th class="px-4 py-3.5 text-right">Actions</th>
                     </tr>
@@ -215,13 +306,15 @@ $profit  = $revenue - (float)$stats['cost'];
                         <td class="px-4 py-3 text-slate-500 text-xs"><?php echo htmlspecialchars($s['contact_number'] ?: '—'); ?></td>
                         <td class="px-4 py-3 font-bold text-rose-500 text-xs">LKR <?php echo number_format((float)$s['item_discount']+(float)$s['bill_discount'],2); ?></td>
                         <td class="px-4 py-3 font-black text-emerald-600 text-xs">LKR <?php echo number_format($s['grand_total'],2); ?></td>
-                        <td class="px-4 py-3 text-xs font-bold text-slate-600"><?php echo htmlspecialchars($s['payment_method']); ?></td>
+                        <td class="px-4 py-3 font-bold text-emerald-600 text-xs">LKR <?php echo number_format($s['total_paid'], 2); ?></td>
+                        <td class="px-4 py-3 font-bold text-rose-600 text-xs">LKR <?php echo number_format($s['grand_total'] - $s['total_paid'], 2); ?></td>
                         <td class="px-4 py-3 text-center">
                             <?php $sc = $s['payment_status']==='completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'; ?>
                             <span class="px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider <?php echo $sc; ?>"><?php echo $s['payment_status']; ?></span>
                         </td>
                         <td class="px-4 py-2.5 text-right">
                             <div class="flex items-center justify-end gap-1 flex-wrap">
+                                <button onclick="openHistory(<?php echo $s['id']; ?>, '<?php echo addslashes($s['customer_name'] ?: 'Walk-in'); ?>', <?php echo (float)$s['grand_total'] - (float)$s['total_paid']; ?>)" class="bg-amber-500 hover:bg-black text-white px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all">Payments</button>
                                 <button onclick="viewSale(<?php echo $s['id']; ?>)" class="bg-slate-700 hover:bg-black text-white px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all">View</button>
                                 <button onclick="editSale(<?php echo $s['id']; ?>)" class="bg-emerald-600 hover:bg-emerald-800 text-white px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all">Edit</button>
                                 <button onclick="printSale(<?php echo $s['id']; ?>)" class="bg-indigo-600 hover:bg-indigo-800 text-white px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all">Print</button>
@@ -255,6 +348,150 @@ $profit  = $revenue - (float)$stats['cost'];
             <button onclick="document.getElementById('modal-view').classList.add('hidden')" class="text-slate-500 hover:text-slate-800"><i class="fa-solid fa-times text-xl"></i></button>
         </div>
         <div id="view-content" class="overflow-y-auto p-6 space-y-4 custom-scroll"></div>
+    </div>
+</div>
+
+<!-- Modal: Add Payment -->
+<div id="add-payment-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[60] flex items-center justify-center p-4 hidden">
+    <div class="glass-card w-full max-w-xl max-h-[90vh] overflow-y-auto p-1 text-slate-800">
+         <div class="p-6">
+            <div class="flex items-center justify-between mb-8">
+                <div>
+                    <h3 class="text-xl font-black text-slate-900 font-['Outfit']">Record New Transaction</h3>
+                    <p id="add-payment-cust-name" class="text-[10px] uppercase font-black text-indigo-500 tracking-widest mt-1">CLIENT NAME</p>
+                </div>
+                <button onclick="closeAddPayment()" class="text-slate-400 hover:text-rose-500 transition-colors"><i class="fa-solid fa-times text-2xl"></i></button>
+            </div>
+
+            <form id="payment-form" class="space-y-6">
+                <input type="hidden" name="sale_id" id="payment_sale_id">
+                
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="col-span-2 sm:col-span-1">
+                        <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Amount (LKR)</label>
+                        <input type="number" step="0.01" name="amount" id="payment_amount" class="input-glass w-full" required>
+                    </div>
+                    <div class="col-span-2 sm:col-span-1">
+                        <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Payment Type</label>
+                        <select name="type" id="payment_type" class="input-glass w-full appearance-none cursor-pointer" onchange="togglePaymentFields()" required>
+                            <option value="Cash">Cash</option>
+                            <option value="Account Transfer">Account Transfer</option>
+                            <option value="Cheque">Cheque</option>
+                            <option value="Card">Card</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="col-span-2 sm:col-span-1">
+                        <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Transaction Date</label>
+                        <input type="date" name="date" class="input-glass w-full" value="<?php echo date('Y-m-d'); ?>" required>
+                    </div>
+                </div>
+
+                <!-- Bank Section -->
+                <div id="bank_section" class="hidden space-y-4 animate-[fadeIn_0.3s_ease]">
+                    <div class="relative">
+                        <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Select Bank Account</label>
+                        <input type="text" placeholder="Search saved banks..." class="input-glass w-full" onkeyup="searchBanks(this.value)">
+                        <div id="bank_results" class="hidden absolute w-full top-[110%] left-0 z-30 bg-white/95 backdrop-blur-xl border border-slate-200 rounded-2xl shadow-2xl p-2 max-h-[200px] overflow-y-auto"></div>
+                        <input type="hidden" name="bank_id" id="selected_bank_id">
+                    </div>
+                    <div id="selected_bank_info" class="hidden bg-indigo-50 p-4 rounded-2xl border border-indigo-100 flex items-center justify-between">
+                        <div>
+                            <p id="disp_bank_name" class="text-sm font-black text-indigo-900"></p>
+                            <p id="disp_bank_acc" class="text-[10px] font-bold text-indigo-400"></p>
+                        </div>
+                        <button type="button" onclick="clearBank()" class="text-rose-500 hover:scale-110 transition-transform"><i class="fa-solid fa-circle-xmark"></i></button>
+                    </div>
+                </div>
+
+                <!-- Cheque Section -->
+                <div id="cheque_section" class="hidden space-y-4 animate-[fadeIn_0.3s_ease]">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="col-span-2 sm:col-span-1">
+                            <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Cheque Number</label>
+                            <input type="text" name="chq_no" class="input-glass w-full" placeholder="XXXXXX">
+                        </div>
+                        <div class="col-span-2 sm:col-span-1">
+                            <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Cheque Payer</label>
+                            <input type="text" name="chq_payer" placeholder="Enter payer name (Optional)" class="input-glass w-full">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Proof Section -->
+                <div id="proof_section" class="hidden animate-[fadeIn_0.3s_ease]">
+                    <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Payment Proof (Image)</label>
+                    <div class="relative">
+                        <input type="file" name="proof" id="payment_proof" class="hidden" accept="image/*" onchange="previewProof(this)">
+                        <button type="button" onclick="document.getElementById('payment_proof').click()" class="w-full flex items-center justify-center gap-3 p-8 border-2 border-dashed border-slate-200 rounded-2xl hover:bg-slate-50 hover:border-indigo-300 transition-all text-slate-400 group">
+                            <i class="fa-solid fa-cloud-arrow-up text-3xl group-hover:scale-110 transition-transform"></i>
+                            <span class="text-[10px] font-black uppercase tracking-widest">Click to upload scan/photo</span>
+                        </button>
+                        <div id="proof_preview" class="hidden mt-4 relative rounded-2xl overflow-hidden border border-slate-100">
+                            <img src="" alt="Proof Preview" class="w-full h-auto">
+                            <button type="button" onclick="clearProof()" class="absolute top-3 right-3 bg-rose-500 text-white w-8 h-8 rounded-full flex items-center justify-center shadow-lg"><i class="fa-solid fa-times"></i></button>
+                        </div>
+                    </div>
+                </div>
+
+                <button type="submit" class="w-full bg-slate-900 hover:bg-black text-white py-5 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl transition-all active:scale-[0.98]">
+                    Confirm Transaction
+                </button>
+            </form>
+         </div>
+    </div>
+</div>
+
+<!-- Modal: History -->
+<div id="history-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden">
+    <div class="glass-card w-full max-w-4xl max-h-[90vh] overflow-y-auto p-8 text-slate-800">
+        <div class="flex items-center justify-between mb-8">
+            <div>
+                <h3 class="text-xl font-black text-slate-900 font-['Outfit']">Payment History</h3>
+                <p id="history-cust-name" class="text-[10px] uppercase font-black text-indigo-500 tracking-widest mt-1">CLIENT NAME</p>
+            </div>
+            <button onclick="closeHistory()" class="text-slate-400 hover:text-rose-500 transition-colors"><i class="fa-solid fa-times text-2xl"></i></button>
+        </div>
+        <div id="history-header" class="mb-6 hidden">
+             <button id="btn-add-payment-inside" class="bg-emerald-600 hover:bg-black text-white px-6 py-3 rounded-xl text-xs font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-600/20">
+                <i class="fa-solid fa-plus mr-2"></i> Add New Payment
+             </button>
+        </div>
+        <div id="history-content" class="overflow-x-auto min-h-[300px]">
+            <!-- History Table goes here -->
+        </div>
+    </div>
+</div>
+
+<!-- Quick Add Bank Modal -->
+<div id="create-bank-modal" class="fixed inset-0 bg-slate-900/70 backdrop-blur-md z-[70] hidden items-center justify-center p-4">
+    <div class="glass-card w-full max-w-md p-7 text-slate-800">
+        <div class="flex items-center justify-between mb-6">
+            <div>
+                <h4 class="text-lg font-black text-slate-900 font-['Outfit']">Add New Bank</h4>
+                <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-1">Register a new bank account</p>
+            </div>
+            <button type="button" onclick="closeCreateBankModal()" class="text-slate-400 hover:text-rose-500 transition-colors"><i class="fa-solid fa-times text-xl"></i></button>
+        </div>
+        <div class="space-y-4">
+            <div>
+                <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Bank Name</label>
+                <input type="text" id="new_bank_name" class="input-glass w-full" placeholder="e.g. Bank of Ceylon">
+            </div>
+            <div>
+                <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Account Number</label>
+                <input type="text" id="new_bank_acc_no" class="input-glass w-full" placeholder="e.g. 0023456789">
+            </div>
+            <div>
+                <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Account Name</label>
+                <input type="text" id="new_bank_acc_name" class="input-glass w-full" placeholder="e.g. Crystal Distributors">
+            </div>
+            <button type="button" onclick="saveNewBank()" class="w-full mt-2 bg-indigo-600 hover:bg-indigo-700 text-white py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-colors shadow-lg shadow-indigo-600/20">
+                <i class="fa-solid fa-floppy-disk mr-2"></i>Save Bank
+            </button>
+        </div>
     </div>
 </div>
 
@@ -358,6 +595,112 @@ function deleteSale(id, billId) {
         if (res.success) location.reload();
         else alert('Error: '+res.message);
     });
+}
+
+// ── Payment Handlers ──
+function openAddPayment(saleId, name, pending) {
+    document.getElementById('payment_sale_id').value = saleId;
+    document.getElementById('add-payment-cust-name').innerText = name;
+    document.getElementById('payment_amount').value = pending > 0 ? pending.toFixed(2) : '';
+    document.getElementById('add-payment-modal').classList.remove('hidden');
+    togglePaymentFields();
+}
+function closeAddPayment() {
+    document.getElementById('add-payment-modal').classList.add('hidden');
+    document.getElementById('payment-form').reset();
+    clearBank(); clearProof();
+}
+function togglePaymentFields() {
+    const type = document.getElementById('payment_type').value;
+    const bankSec = document.getElementById('bank_section');
+    const chqSec = document.getElementById('cheque_section');
+    const proofSec = document.getElementById('proof_section');
+    bankSec.classList.toggle('hidden', type !== 'Account Transfer' && type !== 'Cheque');
+    chqSec.classList.toggle('hidden', type !== 'Cheque');
+    proofSec.classList.toggle('hidden', type !== 'Account Transfer' && type !== 'Cheque');
+}
+function searchBanks(term) {
+    const results = document.getElementById('bank_results');
+    if(term.length < 2) return results.classList.add('hidden');
+    fetch(`?action=search_bank&term=${term}`).then(r => r.json()).then(data => {
+        let html = '';
+        data.forEach(b => {
+            html += `<div class="p-3 hover:bg-slate-100 cursor-pointer rounded-xl" onclick="selectBank(${b.id}, '${b.name}', '${b.account_number}')">
+                <p class="text-xs font-black uppercase">${b.name}</p><p class="text-[9px] text-slate-400">ACC: ${b.account_number}</p>
+            </div>`;
+        });
+        if(!data.length) html = `<div class="p-3 text-center"><p class="text-[9px] font-black text-slate-400 mb-2 uppercase">No banks found</p><button type="button" onclick="openCreateBankModal('${term}')" class="w-full bg-indigo-600 text-white py-2 rounded-xl text-[9px] font-black uppercase">Create New</button></div>`;
+        results.innerHTML = html; results.classList.remove('hidden');
+    });
+}
+function selectBank(id, name, acc) {
+    document.getElementById('selected_bank_id').value = id;
+    document.getElementById('disp_bank_name').innerText = name;
+    document.getElementById('disp_bank_acc').innerText = `ACC: ${acc}`;
+    document.getElementById('selected_bank_info').classList.remove('hidden');
+    document.getElementById('bank_results').classList.add('hidden');
+}
+function clearBank() { document.getElementById('selected_bank_id').value = ''; document.getElementById('selected_bank_info').classList.add('hidden'); }
+function openCreateBankModal(prefill) { document.getElementById('new_bank_name').value = prefill; document.getElementById('create-bank-modal').classList.remove('hidden'); document.getElementById('create-bank-modal').classList.add('flex'); }
+function closeCreateBankModal() { document.getElementById('create-bank-modal').classList.add('hidden'); document.getElementById('create-bank-modal').classList.remove('flex'); }
+function saveNewBank() {
+    const name = document.getElementById('new_bank_name').value;
+    const acc = document.getElementById('new_bank_acc_no').value;
+    const holder = document.getElementById('new_bank_acc_name').value;
+    const fd = new FormData(); fd.append('action','create_bank'); fd.append('name',name); fd.append('acc_no',acc); fd.append('acc_name',holder);
+    fetch('',{method:'POST',body:fd}).then(r=>r.json()).then(data=>{ if(data.success){ selectBank(data.id, name, acc); closeCreateBankModal(); } });
+}
+function previewProof(input) {
+    if(input.files && input.files[0]){
+        const reader = new FileReader();
+        reader.onload = e => { document.querySelector('#proof_preview img').src = e.target.result; document.getElementById('proof_preview').classList.remove('hidden'); }
+        reader.readAsDataURL(input.files[0]);
+    }
+}
+function clearProof() { document.getElementById('payment_proof').value=''; document.getElementById('proof_preview').classList.add('hidden'); }
+document.getElementById('payment-form').onsubmit = function(e){
+    e.preventDefault();
+    const fd = new FormData(this); fd.append('action','save_payment');
+    const btn = this.querySelector('button[type="submit"]'); btn.disabled=true; btn.innerText='PROCESSING...';
+    fetch('',{method:'POST',body:fd}).then(r=>r.json()).then(data=>{ if(data.success) location.reload(); else { alert(data.message); btn.disabled=false; btn.innerText='CONFIRM TRANSACTION'; } });
+}
+function openHistory(saleId, name, pending) {
+    document.getElementById('history-cust-name').innerText = name;
+    document.getElementById('history-content').innerHTML = '<div class="flex items-center justify-center py-20"><i class="fa-solid fa-spinner fa-spin text-3xl text-indigo-500"></i></div>';
+    
+    // Show/Hide Add Payment button inside history
+    const header = document.getElementById('history-header');
+    const addBtn = document.getElementById('btn-add-payment-inside');
+    if (pending > 0.01) {
+        header.classList.remove('hidden');
+        addBtn.onclick = () => openAddPayment(saleId, name, pending);
+    } else {
+        header.classList.add('hidden');
+    }
+
+    document.getElementById('history-modal').classList.remove('hidden');
+    fetch(`?action=get_history&sale_id=${saleId}`).then(r=>r.json()).then(res => {
+        if(!res.success) return;
+        let html = `<table class="w-full text-left text-xs"><thead class="table-header"><tr><th class="px-4 py-2">Date</th><th class="px-4 py-2">Type</th><th class="px-4 py-2">Amount</th><th class="px-4 py-2">Details</th><th class="px-4 py-2 text-right">Action</th></tr></thead><tbody class="divide-y divide-slate-100">`;
+        res.data.forEach(p => {
+            html += `<tr>
+                <td class="px-4 py-3">${p.payment_date}</td>
+                <td class="px-4 py-3"><span class="font-black text-indigo-600 uppercase text-[9px]">${p.payment_type}</span></td>
+                <td class="px-4 py-3 font-bold">LKR ${fmt(p.amount)}</td>
+                <td class="px-4 py-3 text-[10px] text-slate-500">${p.bank_name ? p.bank_name : ''} ${p.cheque_number ? ' #'+p.cheque_number : ''}</td>
+                <td class="px-4 py-3 text-right"><button onclick="deletePayment(${p.id})" class="text-rose-500 hover:text-rose-700 transition-colors"><i class="fa-solid fa-trash-can"></i></button></td>
+            </tr>`;
+        });
+        if(!res.data.length) html += `<tr><td colspan="5" class="py-10 text-center text-slate-400 italic">No payment history found.</td></tr>`;
+        html += `</tbody></table>`;
+        document.getElementById('history-content').innerHTML = html;
+    });
+}
+function closeHistory() { document.getElementById('history-modal').classList.add('hidden'); }
+function deletePayment(id) {
+    if(!confirm('Delete this payment record?')) return;
+    const fd = new FormData(); fd.append('action','delete_payment'); fd.append('id',id);
+    fetch('',{method:'POST',body:fd}).then(r=>r.json()).then(data=>{ if(data.success) location.reload(); else alert(data.message); });
 }
 
 // Handle edit redirect from pos.php

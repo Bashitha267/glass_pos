@@ -383,6 +383,12 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
             </form>
         </div>
 
+        <!-- Delivery Section Heading -->
+        <h2 class="text-xl font-black text-slate-900 font-['Outfit'] tracking-tight mb-6 flex items-center gap-3">
+            <i class="fa-solid fa-truck-fast text-slate-400"></i>
+            Delivery Details
+        </h2>
+
         <!-- Key Metrics Grid -->
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
             <!-- Deliveries -->
@@ -452,6 +458,14 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
                 </div>
                 <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Delivery Profit</p>
                 <h2 class="text-3xl font-black text-teal-600 tracking-tighter">LKR <?php echo number_format($profit, 2); ?></h2>
+            </div>
+
+            <!-- POS Sales Reports Heading -->
+            <div class="col-span-full mt-4 mb-2">
+                <h2 class="text-xl font-black text-slate-900 font-['Outfit'] tracking-tight flex items-center gap-3">
+                    <i class="fa-solid fa-cash-register text-slate-400"></i>
+                    POS Sales Reports
+                </h2>
             </div>
 
             <!-- POS Revenue -->
@@ -532,6 +546,12 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
             </div>
         </div>
 
+        <!-- Delivery Analysis Section -->
+        <h2 class="text-xl font-black text-slate-900 font-['Outfit'] tracking-tight mb-6 flex items-center gap-3">
+            <i class="fa-solid fa-chart-pie text-slate-400"></i>
+            Delivery Details
+        </h2>
+
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <!-- Items Pie Chart -->
             <div class="glass-card p-8 h-full bg-slate-50 border-slate-200">
@@ -576,8 +596,14 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
             </div>
         </div>
 
+        <!-- POS Analysis Section -->
+        <h2 class="text-xl font-black text-slate-900 font-['Outfit'] tracking-tight mb-6 mt-10 flex items-center gap-3">
+            <i class="fa-solid fa-chart-line text-slate-400"></i>
+            POS Sales Reports
+        </h2>
+
         <!-- POS Charts -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-4">
             <!-- POS Most Sold Items -->
             <div class="glass-card p-8 h-full bg-slate-50 border-violet-200">
                 <div class="flex items-center justify-between mb-8">
