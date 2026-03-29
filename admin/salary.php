@@ -290,20 +290,20 @@ foreach ($staff_raw as $staff) {
 	</style>
 </head>
 <body class="pb-10">
-	<header class="glass-header sticky top-0 z-40 py-4 mb-8 leading-none shadow-sm">
-		<div class="max-w-[1600px] mx-auto px-6 flex items-center justify-between">
-			<div class="flex items-center space-x-5">
+	<header class="glass-header sticky top-0 z-40 py-4 mb-6 sm:mb-8 leading-none shadow-sm">
+		<div class="max-w-[1600px] mx-auto px-4 sm:px-6 flex items-center justify-between gap-4">
+			<div class="flex items-center space-x-3 sm:space-x-5">
 				<a href="dashboard.php" class="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-100 text-slate-800 hover:bg-slate-900 hover:text-white transition-all shadow-sm">
 					<i class="fa-solid fa-arrow-left"></i>
 				</a>
 				<div>
-					<h1 class="text-2xl font-black text-slate-900 font-['Outfit'] tracking-tight">Staff Salary Payments</h1>
-					<p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-1">Monthly Salary Management</p>
+					<h1 class="text-lg sm:text-2xl font-black text-slate-900 font-['Outfit'] tracking-tight">Staff Salary</h1>
+					<p class="text-[9px] sm:text-[10px] uppercase font-black text-slate-400 tracking-widest mt-1">Management</p>
 				</div>
 			</div>
-			<div class="bg-slate-900 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center space-x-3 shadow-lg shadow-slate-900/20">
+			<div class="bg-slate-900 text-white px-4 py-2 sm:px-5 sm:py-2.5 rounded-2xl text-[9px] sm:text-[10px] font-black uppercase tracking-widest flex items-center space-x-3 shadow-lg shadow-slate-900/20">
 				<i class="fa-solid fa-calendar-check text-base"></i>
-				<span><?php echo date('Y-M-d'); ?></span>
+				<span class="whitespace-nowrap"><?php echo date('Y-M-d'); ?></span>
 			</div>
 		</div>
 	</header>
@@ -379,7 +379,7 @@ foreach ($staff_raw as $staff) {
 
 		<div class="glass-card p-0 overflow-hidden">
 			<div class="overflow-x-auto">
-				<table class="min-w-full text-sm">
+				<table class="min-w-[900px] w-full text-sm">
 					<thead class="bg-slate-900 text-white uppercase text-[10px] tracking-widest">
 						<tr>
 							<th class="text-left px-4 py-3">Name</th>

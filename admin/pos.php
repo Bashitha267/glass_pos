@@ -284,11 +284,11 @@ if ($action === 'delete_pos_sale') {
     </style>
 </head>
 <body class="flex flex-col">
-<header class="glass-header sticky top-0 z-40 py-3">
-    <div class="px-5 flex items-center justify-between">
-        <div class="flex items-center space-x-3 md:space-x-5">
+<header class="glass-header sticky top-0 z-40 py-3 sm:py-4">
+    <div class="px-3 sm:px-5 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div class="flex items-center space-x-3 md:space-x-5 self-start sm:self-auto">
             <a href="dashboard.php" class="text-slate-800 hover:text-cyan-600 transition-colors p-2 rounded-2xl hover:bg-slate-100">
-                <i class="fa-solid fa-arrow-left text-lg"></i>
+                <i class="fa-solid fa-arrow-left text-base sm:text-lg"></i>
             </a>
             <div>
                 <h1 class="text-xl md:text-2xl font-black text-slate-900 font-['Outfit'] tracking-tight">Point of Sale</h1>
@@ -316,8 +316,8 @@ if ($action === 'delete_pos_sale') {
         </div>
     </div>
 </header>
-<main class="px-5 py-8 w-full">
-  <div class="glass-card p-5 mb-4 flex flex-col min-h-[calc(100vh-170px)]" id="sale-form-card">
+<main class="px-3 sm:px-5 py-6 sm:py-8 w-full">
+  <div class="glass-card p-4 sm:p-5 mb-4 flex flex-col min-h-[calc(100vh-170px)]" id="sale-form-card">
     <!-- SALE DATE -->
     <div class="flex flex-col md:flex-row gap-4 mb-6 items-start md:items-center justify-between">
       <div class="flex items-center gap-4">
@@ -353,8 +353,8 @@ if ($action === 'delete_pos_sale') {
         <div id="item_results" class="dropdown-results absolute w-full mt-1 border border-slate-200 rounded-xl shadow-2xl z-[100] hidden overflow-hidden max-h-72 overflow-y-auto"></div>
       </div>
       <!-- ITEMS TABLE -->
-      <div class="overflow-x-auto rounded-2xl border border-slate-100">
-        <table class="w-full text-left" id="items-table">
+      <div class="overflow-x-auto rounded-2xl border border-slate-100 no-scrollbar">
+        <table class="w-full text-left min-w-[900px]" id="items-table">
           <thead>
             <tr class="table-header">
               <th class="px-4 py-3 text-[12px]">Item Details</th>
@@ -396,8 +396,8 @@ if ($action === 'delete_pos_sale') {
       </div>
 
       <!-- Right: Summary & Action -->
-      <div class="flex items-center gap-6 w-full lg:w-auto justify-between lg:justify-end">
-        <div class="flex gap-4 items-center">
+      <div class="flex flex-col sm:flex-row items-center gap-6 w-full lg:w-auto justify-between lg:justify-end">
+        <div class="flex gap-4 items-center justify-between w-full sm:w-auto">
           <div class="text-right">
             <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Subtotal</p>
             <p id="disp-subtotal" class="text-sm font-black text-slate-700">LKR 0.00</p>

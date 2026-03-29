@@ -175,18 +175,18 @@ $user_list = $users->fetchAll();
 <body class="flex flex-col">
 
     <header class="glass-header sticky top-0 z-40 py-4">
-        <div class="max-w-7xl mx-auto px-6 flex items-center justify-between">
-            <div class="flex items-center space-x-5">
-                <a href="dashboard.php" class="text-slate-800 hover:text-cyan-600 transition-colors p-2.5 rounded-2xl hover:bg-slate-100">
-                    <i class="fa-solid fa-arrow-left text-xl"></i>
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div class="flex items-center space-x-3 sm:space-x-5">
+                <a href="dashboard.php" class="text-slate-800 hover:text-cyan-600 transition-colors p-2 rounded-2xl hover:bg-slate-100">
+                    <i class="fa-solid fa-arrow-left text-lg sm:text-xl"></i>
                 </a>
                 <div>
-                    <h1 class="text-2xl font-black text-slate-900 font-['Outfit'] tracking-tight">Staff Directory</h1>
-                    <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-0.5">Manage Team Records</p>
+                    <h1 class="text-lg sm:text-2xl font-black text-slate-900 font-['Outfit'] tracking-tight">Staff Directory</h1>
+                    <p class="text-[9px] sm:text-[10px] uppercase font-black text-slate-400 tracking-widest mt-0.5">Manage Team Records</p>
                 </div>
             </div>
-            <div class="flex space-x-3">
-                <button onclick="openModal('employee')" class="bg-indigo-600 hover:bg-black text-white px-6 py-3 rounded-2xl font-bold text-xs uppercase tracking-widest transition-all shadow-xl shadow-indigo-900/20">
+            <div class="flex w-full sm:w-auto">
+                <button onclick="openModal('employee')" class="w-full sm:w-auto bg-indigo-600 hover:bg-black text-white px-6 py-3 rounded-2xl font-bold text-[10px] sm:text-xs uppercase tracking-widest transition-all shadow-xl shadow-indigo-900/20">
                     Add Staff Member
                 </button>
             </div>
@@ -233,7 +233,7 @@ $user_list = $users->fetchAll();
         <!-- Employee Table -->
         <div class="glass-card overflow-hidden">
             <div class="overflow-x-auto">
-                <table class="w-full text-left">
+                <table class="w-full text-left min-w-[800px]">
                     <thead>
                         <tr class="bg-slate-900 text-[11px] uppercase tracking-wider text-white">
                             <th class="px-6 py-5 font-black">ID</th>

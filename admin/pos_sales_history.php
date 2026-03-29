@@ -217,13 +217,13 @@ $profit  = $revenue - (float)$stats['cost'];
 </head>
 <body class="flex flex-col pb-12">
 <header class="glass-header sticky top-0 z-40 py-4">
-    <div class="px-5 flex items-center justify-between">
-        <div class="flex items-center space-x-3 md:space-x-5">
+    <div class="px-4 sm:px-5 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div class="flex items-center space-x-3 md:space-x-5 self-start sm:self-auto">
             <a href="pos.php" class="text-slate-800 hover:text-cyan-600 p-2 rounded-2xl hover:bg-slate-100 transition-colors">
-                <i class="fa-solid fa-arrow-left text-lg"></i>
+                <i class="fa-solid fa-arrow-left text-base sm:text-lg"></i>
             </a>
             <div>
-                <h1 class="text-xl md:text-2xl font-black text-slate-900 font-['Outfit']">POS Sales History</h1>
+                <h1 class="text-lg sm:text-2xl font-black text-slate-900 font-['Outfit']">POS History</h1>
                 <p class="hidden md:block text-[10px] uppercase font-black text-slate-400 tracking-widest mt-0.5">Direct Sales Records</p>
             </div>
         </div>

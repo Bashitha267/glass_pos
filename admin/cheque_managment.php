@@ -169,7 +169,7 @@ $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <body class="flex flex-col">
 
     <header class="glass-header sticky top-0 z-40 py-3">
-        <div class="px-10 flex items-center justify-between">
+        <div class="px-4 sm:px-10 flex items-center justify-between gap-4">
             <div class="flex items-center space-x-3 sm:space-x-4">
                 <a href="dashboard.php" class="text-slate-800 hover:text-cyan-600 transition-colors">
                     <i class="fa-solid fa-arrow-left text-lg sm:text-xl"></i>
@@ -183,7 +183,7 @@ $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
             </div>
         </div>
         <!-- Tabs -->
-        <div class="px-10 mt-4 flex border-b border-slate-200">
+        <div class="px-4 sm:px-10 mt-4 flex border-b border-slate-200 overflow-x-auto whitespace-nowrap scroll-smooth no-scrollbar">
             <a href="?tab=received" class="tab-btn <?php echo $current_tab === 'received' ? 'active' : ''; ?>">Cheques Received</a>
             <a href="?tab=given" class="tab-btn <?php echo $current_tab === 'given' ? 'active' : ''; ?>">Cheques Given</a>
         </div>
