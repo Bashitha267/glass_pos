@@ -254,18 +254,18 @@ if ($tab === 'received') {
 <body class="pb-20">
 
     <header class="glass-header sticky top-0 z-40 py-4">
-        <div class="max-w-[1600px] mx-auto px-6 flex items-center justify-between">
-            <div class="flex items-center space-x-5">
+        <div class="max-w-[1600px] mx-auto px-4 sm:px-6 flex items-center justify-between gap-4">
+            <div class="flex items-center space-x-3 sm:space-x-5">
                 <a href="dashboard.php" class="text-slate-800 hover:text-indigo-600 transition-colors p-2.5 rounded-2xl hover:bg-slate-100">
                     <i class="fa-solid fa-arrow-left text-xl"></i>
                 </a>
                 <div>
-                    <h1 class="text-2xl font-black text-slate-900 font-['Outfit'] tracking-tight">Payment Management</h1>
-                    <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-0.5">Finance & AR Control Center</p>
+                    <h1 class="text-xl sm:text-2xl font-black text-slate-900 font-['Outfit'] tracking-tight">Payment Management</h1>
+                    <p class="text-[9px] sm:text-[10px] uppercase font-black text-slate-400 tracking-widest mt-0.5">Finance & AR Control Center</p>
                 </div>
             </div>
         </div>
-        <div class="max-w-[1600px] mx-auto px-6 mt-4 flex border-b border-white w-full">
+        <div class="max-w-[1600px] mx-auto px-4 sm:px-6 mt-4 flex border-b border-white w-full overflow-x-auto whitespace-nowrap scroll-smooth no-scrollbar">
             <a href="?tab=received" class="tab-btn <?php echo $tab === 'received' ? 'active' : ''; ?>">Payments Received</a>
             <a href="?tab=given" class="tab-btn <?php echo $tab === 'given' ? 'active' : ''; ?>">Payments Given</a>
         </div>

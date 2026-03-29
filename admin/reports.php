@@ -437,8 +437,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
 </head>
 <body class="pb-10">
 
-    <header class="glass-header sticky top-0 z-40 py-4 mb-8 leading-none shadow-sm">
-        <div class="max-w-[1600px] mx-auto px-6 flex items-center justify-between">
+    <header class="glass-header sticky top-0 z-40 py-4 mb-4 sm:mb-8 leading-none shadow-sm">
+        <div class="max-w-[1600px] mx-auto px-4 sm:px-6 flex flex-col md:flex-row items-center justify-between gap-6">
             <div class="flex items-center space-x-5">
                 <a href="dashboard.php" class="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-100 text-slate-800 hover:bg-slate-900 hover:text-white transition-all shadow-sm">
                     <i class="fa-solid fa-arrow-left"></i>
@@ -457,7 +457,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
                     <i class="fa-solid fa-calendar-check text-base"></i>
                     <span class="whitespace-nowrap">REPORT GENERATED: <?php echo date('Y-M-d'); ?></span>
                 </div>
-                <div class="bg-emerald-500 text-white px-5 py-2.5 rounded-2xl text-[12px] font-black uppercase tracking-widest flex items-center justify-center space-x-3 shadow-lg shadow-emerald-500/30 ml-2">
+                <div class="bg-emerald-500 text-white px-5 py-2.5 rounded-2xl text-[12px] font-black uppercase tracking-widest flex items-center justify-center space-x-3 shadow-lg shadow-emerald-500/30">
                     <i class="fa-solid fa-sack-dollar text-xl"></i>
                     <div class="flex flex-col text-left leading-none">
                         <span class="text-[8px] opacity-80 whitespace-nowrap">THIS MONTH'S PROFIT</span>
@@ -468,7 +468,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
         </div>
     </header>
 
-    <main class="max-w-[1600px] mx-auto px-6">
+    <main class="max-w-[1600px] mx-auto px-4 sm:px-6">
 
         <!-- Filters (Synced with managePayments style) -->
         <div class="bg-slate-900/90 backdrop-blur-xl border border-slate-700 rounded-[28px] p-6 mb-8 shadow-2xl">
@@ -703,6 +703,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
                             <?php endif; ?>
                         </tbody>
                     </table>
+            </div>
                 </div>
             </div>
         </div>
