@@ -613,19 +613,28 @@ if ($current_tab === 'other') {
             color: #0891b2;
             background: rgba(8, 145, 178, 0.05);
         }
+
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
     </style>
 </head>
 
 <body class="flex flex-col">
 
     <header class="glass-header sticky top-0 z-40 py-3">
-        <div class="px-10 flex items-center justify-between">
+        <div class="px-4 sm:px-10 flex items-center justify-between gap-2">
             <div class="flex items-center space-x-3 sm:space-x-4">
                 <a href="dashboard.php" class="text-slate-800 hover:text-cyan-600 transition-colors">
                     <i class="fa-solid fa-arrow-left text-lg sm:text-xl"></i>
                 </a>
                 <h1
-                    class="text-xl sm:text-2xl font-bold tracking-tight uppercase truncate max-w-[200px] sm:max-w-none text-slate-800">
+                    class="text-lg sm:text-2xl font-bold tracking-tight uppercase text-slate-800">
                     Inventory Registry</h1>
             </div>
             <?php if ($current_tab === 'other'): ?>
@@ -645,11 +654,12 @@ if ($current_tab === 'other') {
             <?php endif; ?>
         </div>
         <!-- Tabs -->
-        <div class="px-10 mt-4 flex border-b border-slate-200">
+        <div class="px-4 sm:px-10 mt-4 flex border-b border-slate-200 overflow-x-auto whitespace-nowrap no-scrollbar scroll-smooth">
             <a href="?tab=containers"
                 class="tab-btn <?php echo $current_tab === 'containers' ? 'active' : ''; ?>">Container
                 Registry</a>
-            <a href="?tab=other" class="tab-btn <?php echo $current_tab === 'other' ? 'active' : ''; ?>">Other
+            <a href="?tab=other"
+                class="tab-btn <?php echo $current_tab === 'other' ? 'active' : ''; ?>">Other
                 Purchases</a>
         </div>
     </header>
@@ -710,7 +720,7 @@ if ($current_tab === 'other') {
         <!-- List -->
         <div class="glass-card overflow-hidden">
             <div class="overflow-x-auto">
-                <table class="w-full text-left min-w-[1000px] lg:min-w-0">
+                <table class="w-full text-left min-w-[1100px] lg:min-w-0">
                     <thead>
                         <?php if ($current_tab === 'other'): ?>
                             <tr
