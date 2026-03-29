@@ -162,20 +162,18 @@ $dash_total_profit = ($del_revenue - $dash_total_cost - $dash_total_expenses) + 
 
     <!-- Header Block -->
     <header class="glass-header sticky top-0 z-50 py-3 leading-none">
-        <div class="max-w-[1400px] mx-auto px-6 flex items-center justify-between">
-            <div class="flex items-center space-x-4">
-                <div class="w-11 h-11 rounded-2xl bg-white overflow-hidden flex items-center justify-center shadow-lg">
-                    <img src="../assests/logo.jpeg" alt="Crystal POS logo" class="w-10 h-10 object-cover">
+        <div class="max-w-[1400px] mx-auto px-4 sm:px-6 flex items-center justify-between gap-2">
+            <div class="flex items-center space-x-2 sm:space-x-4">
+                <div class="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl bg-white overflow-hidden flex items-center justify-center shadow-lg">
+                    <img src="../assests/logo.jpeg" alt="Crystal POS logo" class="w-9 h-9 sm:w-10 sm:h-10 object-cover">
                 </div>
                 <div>
-                    <h1 class="text-xl font-black uppercase tracking-tighter text-slate-900 font-['Outfit']">Crystal POS
-                    </h1>
-                    <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Sahan Picture &amp;
-                        Mirror — Inventory Management System</p>
+                    <h1 class="text-lg sm:text-xl font-black uppercase tracking-tighter text-slate-900 font-['Outfit']">Crystal POS</h1>
+                    <p class="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5 truncate max-w-[150px] sm:max-w-none">Sahan Picture & Mirror</p>
                 </div>
             </div>
 
-            <div class="flex items-center space-x-8">
+            <div class="flex items-center space-x-2 sm:space-x-8">
                 <div class="hidden md:flex items-center space-x-6">
                     <div class="text-right hidden lg:block">
                         <span class="text-premium-label">Monthly Revenue</span>
@@ -205,8 +203,8 @@ $dash_total_profit = ($del_revenue - $dash_total_cost - $dash_total_expenses) + 
                     </div>
                 </div>
 
-                <a href="?logout=1" class="btn-logout">
-                    <i class="fa-solid fa-power-off mr-2"></i>Exit
+                <a href="?logout=1" class="btn-logout px-4 py-2 sm:px-5 sm:py-2.5">
+                    <i class="fa-solid fa-power-off sm:mr-2"></i><span class="hidden sm:inline">Exit</span>
                 </a>
             </div>
         </div>
@@ -217,40 +215,40 @@ $dash_total_profit = ($del_revenue - $dash_total_cost - $dash_total_expenses) + 
 
 
         <!-- Dashboard Grid -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
+        <div class="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 sm:gap-6">
             <!-- Point of Sale -->
-            <a href="pos.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
+            <a href="pos.php" class="glass-card group p-5 sm:p-8 flex flex-col items-center justify-center text-center">
                 <div
-                    class="action-icon w-16 h-16 bg-cyan-50 border-2 border-cyan-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
-                    <i class="fa-solid fa-cash-register text-3xl text-cyan-600"></i>
+                    class="action-icon w-12 h-12 sm:w-16 sm:h-16 bg-cyan-50 border-2 border-cyan-500/30 rounded-2xl sm:rounded-3xl flex items-center justify-center mb-4 sm:mb-6 shadow-sm">
+                    <i class="fa-solid fa-cash-register text-xl sm:text-3xl text-cyan-600"></i>
                 </div>
-                <h3 class="text-premium-label text-slate-800 group-hover:text-cyan-600 transition-colors">Point of Sale
+                <h3 class="text-[8px] sm:text-[10px] uppercase font-black tracking-widest text-slate-800 group-hover:text-cyan-600 transition-colors">Point of Sale
                 </h3>
             </a>
-            <a href="nwdelivery.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
+            <a href="nwdelivery.php" class="glass-card group p-5 sm:p-8 flex flex-col items-center justify-center text-center">
                 <div
-                    class="action-icon w-16 h-16 bg-amber-50 border-2 border-amber-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
-                    <i class="fa-solid fa-truck-fast text-3xl text-amber-600"></i>
+                    class="action-icon w-12 h-12 sm:w-16 sm:h-16 bg-amber-50 border-2 border-amber-500/30 rounded-2xl sm:rounded-3xl flex items-center justify-center mb-4 sm:mb-6 shadow-sm">
+                    <i class="fa-solid fa-truck-fast text-xl sm:text-3xl text-amber-600"></i>
                 </div>
-                <h3 class="text-premium-label text-slate-800 group-hover:text-amber-600 transition-colors">Delivery
+                <h3 class="text-[8px] sm:text-[10px] uppercase font-black tracking-widest text-slate-800 group-hover:text-amber-600 transition-colors">Delivery
                     Management</h3>
             </a>
             <a href="addcontainer.php"
-                class="glass-card group p-8 flex flex-col items-center justify-center text-center">
+                class="glass-card group p-5 sm:p-8 flex flex-col items-center justify-center text-center">
                 <div
-                    class="action-icon w-16 h-16 bg-blue-50 border-2 border-blue-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
-                    <i class="fa-solid fa-boxes-stacked text-3xl text-blue-600"></i>
+                    class="action-icon w-12 h-12 sm:w-16 sm:h-16 bg-blue-50 border-2 border-blue-500/30 rounded-2xl sm:rounded-3xl flex items-center justify-center mb-4 sm:mb-6 shadow-sm">
+                    <i class="fa-solid fa-boxes-stacked text-xl sm:text-3xl text-blue-600"></i>
                 </div>
-                <h3 class="text-premium-label text-slate-800 group-hover:text-blue-600 transition-colors">Inventory</h3>
+                <h3 class="text-[8px] sm:text-[10px] uppercase font-black tracking-widest text-slate-800 group-hover:text-blue-600 transition-colors">Inventory</h3>
             </a>
 
             <a href="managePayments.php"
-                class="glass-card group p-8 flex flex-col items-center justify-center text-center">
+                class="glass-card group p-5 sm:p-8 flex flex-col items-center justify-center text-center">
                 <div
-                    class="action-icon w-16 h-16 bg-indigo-50 border-2 border-indigo-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
-                    <i class="fa-solid fa-clock-rotate-left text-3xl text-indigo-600"></i>
+                    class="action-icon w-12 h-12 sm:w-16 sm:h-16 bg-indigo-50 border-2 border-indigo-500/30 rounded-2xl sm:rounded-3xl flex items-center justify-center mb-4 sm:mb-6 shadow-sm">
+                    <i class="fa-solid fa-clock-rotate-left text-xl sm:text-3xl text-indigo-600"></i>
                 </div>
-                <h3 class="text-premium-label text-slate-800 group-hover:text-indigo-600 transition-colors">Payment
+                <h3 class="text-[8px] sm:text-[10px] uppercase font-black tracking-widest text-slate-800 group-hover:text-indigo-600 transition-colors">Payment
                     Management</h3>
             </a>
             <!-- POS Sales History -->
@@ -260,23 +258,23 @@ $dash_total_profit = ($del_revenue - $dash_total_cost - $dash_total_expenses) + 
 
             <!-- Manage Stocks -->
 
-            <a href="salary.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
+            <a href="salary.php" class="glass-card group p-5 sm:p-8 flex flex-col items-center justify-center text-center">
                 <div
-                    class="action-icon w-16 h-16 bg-emerald-50 border-2 border-emerald-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
-                    <i class="fa-solid fa-money-check-dollar text-3xl text-emerald-600"></i>
+                    class="action-icon w-12 h-12 sm:w-16 sm:h-16 bg-emerald-50 border-2 border-emerald-500/30 rounded-2xl sm:rounded-3xl flex items-center justify-center mb-4 sm:mb-6 shadow-sm">
+                    <i class="fa-solid fa-money-check-dollar text-xl sm:text-3xl text-emerald-600"></i>
                 </div>
-                <h3 class="text-premium-label text-slate-800 group-hover:text-emerald-600 transition-colors">Salary &
+                <h3 class="text-[8px] sm:text-[10px] uppercase font-black tracking-widest text-slate-800 group-hover:text-emerald-600 transition-colors">Salary &
                     Payroll</h3>
             </a>
 
             <!-- Manage Employees -->
             <a href="manageEmploy.php"
-                class="glass-card group p-8 flex flex-col items-center justify-center text-center">
+                class="glass-card group p-5 sm:p-8 flex flex-col items-center justify-center text-center">
                 <div
-                    class="action-icon w-16 h-16 bg-purple-50 border-2 border-purple-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
-                    <i class="fa-solid fa-user-tie text-3xl text-purple-600"></i>
+                    class="action-icon w-12 h-12 sm:w-16 sm:h-16 bg-purple-50 border-2 border-purple-500/30 rounded-2xl sm:rounded-3xl flex items-center justify-center mb-4 sm:mb-6 shadow-sm">
+                    <i class="fa-solid fa-user-tie text-xl sm:text-3xl text-purple-600"></i>
                 </div>
-                <h3 class="text-premium-label text-slate-800 group-hover:text-purple-600 transition-colors">Staff
+                <h3 class="text-[8px] sm:text-[10px] uppercase font-black tracking-widest text-slate-800 group-hover:text-purple-600 transition-colors">Staff
                     Management</h3>
             </a>
 
@@ -285,12 +283,12 @@ $dash_total_profit = ($del_revenue - $dash_total_cost - $dash_total_expenses) + 
             <!-- Payment Management -->
 
             <a href="pos_sales_history.php"
-                class="glass-card group p-8 flex flex-col items-center justify-center text-center">
+                class="glass-card group p-5 sm:p-8 flex flex-col items-center justify-center text-center">
                 <div
-                    class="action-icon w-16 h-16 bg-violet-50 border-2 border-violet-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
-                    <i class="fa-solid fa-store text-3xl text-violet-600"></i>
+                    class="action-icon w-12 h-12 sm:w-16 sm:h-16 bg-violet-50 border-2 border-violet-500/30 rounded-2xl sm:rounded-3xl flex items-center justify-center mb-4 sm:mb-6 shadow-sm">
+                    <i class="fa-solid fa-store text-xl sm:text-3xl text-violet-600"></i>
                 </div>
-                <h3 class="text-premium-label text-slate-800 group-hover:text-violet-600 transition-colors">POS Sales
+                <h3 class="text-[8px] sm:text-[10px] uppercase font-black tracking-widest text-slate-800 group-hover:text-violet-600 transition-colors">POS Sales
                     History</h3>
             </a>
 
@@ -298,42 +296,42 @@ $dash_total_profit = ($del_revenue - $dash_total_cost - $dash_total_expenses) + 
 
 
             <!-- Payment History -->
-            <a href="finance.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
+            <a href="finance.php" class="glass-card group p-5 sm:p-8 flex flex-col items-center justify-center text-center">
                 <div
-                    class="action-icon w-16 h-16 bg-emerald-50 border-2 border-emerald-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
-                    <i class="fa-solid fa-receipt text-3xl text-emerald-600"></i>
+                    class="action-icon w-12 h-12 sm:w-16 sm:h-16 bg-emerald-50 border-2 border-emerald-500/30 rounded-2xl sm:rounded-3xl flex items-center justify-center mb-4 sm:mb-6 shadow-sm">
+                    <i class="fa-solid fa-receipt text-xl sm:text-3xl text-emerald-600"></i>
                 </div>
-                <h3 class="text-premium-label text-slate-800 group-hover:text-emerald-600 transition-colors">Delivery
+                <h3 class="text-[8px] sm:text-[10px] uppercase font-black tracking-widest text-slate-800 group-hover:text-emerald-600 transition-colors">Delivery
                     Payment History</h3>
             </a>
 
 
             <!-- Cheque Management -->
             <a href="cheque_managment.php"
-                class="glass-card group p-8 flex flex-col items-center justify-center text-center">
+                class="glass-card group p-5 sm:p-8 flex flex-col items-center justify-center text-center">
                 <div
-                    class="action-icon w-16 h-16 bg-teal-50 border-2 border-teal-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
-                    <i class="fa-solid fa-money-check-dollar text-3xl text-teal-600"></i>
+                    class="action-icon w-12 h-12 sm:w-16 sm:h-16 bg-teal-50 border-2 border-teal-500/30 rounded-2xl sm:rounded-3xl flex items-center justify-center mb-4 sm:mb-6 shadow-sm">
+                    <i class="fa-solid fa-money-check-dollar text-xl sm:text-3xl text-teal-600"></i>
                 </div>
-                <h3 class="text-premium-label text-slate-800 group-hover:text-teal-600 transition-colors">Cheque
+                <h3 class="text-[8px] sm:text-[10px] uppercase font-black tracking-widest text-slate-800 group-hover:text-teal-600 transition-colors">Cheque
                     Management</h3>
             </a>
             <a href="other_expenses.php"
-                class="glass-card group p-8 flex flex-col items-center justify-center text-center">
+                class="glass-card group p-5 sm:p-8 flex flex-col items-center justify-center text-center">
                 <div
-                    class="action-icon w-16 h-16 bg-purple-50 border-2 border-purple-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm group-hover:scale-110 transition-transform">
-                    <i class="fa-solid fa-file-invoice-dollar text-3xl text-purple-600"></i>
+                    class="action-icon w-12 h-12 sm:w-16 sm:h-16 bg-purple-50 border-2 border-purple-500/30 rounded-2xl sm:rounded-3xl flex items-center justify-center mb-4 sm:mb-6 shadow-sm group-hover:scale-110 transition-transform">
+                    <i class="fa-solid fa-file-invoice-dollar text-xl sm:text-3xl text-purple-600"></i>
                 </div>
-                <h3 class="text-premium-label text-slate-800 group-hover:text-purple-600 transition-colors">Overhead
+                <h3 class="text-[8px] sm:text-[10px] uppercase font-black tracking-widest text-slate-800 group-hover:text-purple-600 transition-colors">Overhead
                     Expenses</h3>
             </a>
             <!-- Reports Hub -->
-            <a href="reports.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
+            <a href="reports.php" class="glass-card group p-5 sm:p-8 flex flex-col items-center justify-center text-center">
                 <div
-                    class="action-icon w-16 h-16 bg-rose-50 border-2 border-rose-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
-                    <i class="fa-solid fa-chart-line text-3xl text-rose-600"></i>
+                    class="action-icon w-12 h-12 sm:w-16 sm:h-16 bg-rose-50 border-2 border-rose-500/30 rounded-2xl sm:rounded-3xl flex items-center justify-center mb-4 sm:mb-6 shadow-sm">
+                    <i class="fa-solid fa-chart-line text-xl sm:text-3xl text-rose-600"></i>
                 </div>
-                <h3 class="text-premium-label text-slate-800 group-hover:text-rose-600 transition-colors">Business
+                <h3 class="text-[8px] sm:text-[10px] uppercase font-black tracking-widest text-slate-800 group-hover:text-rose-600 transition-colors">Business
                     Reports</h3>
             </a>
 
