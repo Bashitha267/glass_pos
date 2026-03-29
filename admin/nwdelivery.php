@@ -123,7 +123,7 @@ if ($action == 'save_delivery') {
                 if ($it['item_source'] === 'container') {
                     $pdo->prepare("UPDATE container_items SET sold_qty = GREATEST(0, sold_qty - ?) WHERE id = ?")->execute([$it['qty'], $it['item_id']]);
                 } else {
-                    $pdo->prepare("UPDATE other_purchases SET sold_qty = GREATEST(0, sold_qty - ?) WHERE id = ?")->execute([$it['qty'], $it['item_id']]);
+                    $pdo->prepare("UPDATE other_purchase_items SET sold_qty = GREATEST(0, sold_qty - ?) WHERE id = ?")->execute([$it['qty'], $it['item_id']]);
                 }
             }
             

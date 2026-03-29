@@ -146,13 +146,17 @@ foreach ($expenses as $ex) {
         </div>
 
         <!-- Filters Form -->
-        <form method="GET" class="flex flex-wrap items-center gap-3">
+        <form id="filterForm" method="GET" class="flex flex-wrap items-center gap-3">
             <div class="relative">
                 <i class="fa-solid fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 text-sm"></i>
-                <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="Search expense..." class="pl-9 pr-4 py-2 rounded-xl text-sm font-semibold w-48 transition-all focus:w-56 placeholder-slate-400">
+                <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" 
+                       oninput="this.form.submit()" 
+                       placeholder="Search expense..." 
+                       class="pl-9 pr-4 py-2 rounded-xl text-sm font-semibold w-48 transition-all focus:w-56 placeholder-slate-400"
+                       <?php if(!empty($search)) echo 'autofocus onfocus="this.value = this.value;"'; ?>>
             </div>
             
-            <select name="month" class="py-2 pl-4 pr-8 rounded-xl text-sm font-semibold text-slate-700 cursor-pointer">
+            <select name="month" onchange="this.form.submit()" class="py-2 pl-4 pr-8 rounded-xl text-sm font-semibold text-slate-700 cursor-pointer">
                 <option value="">All Months</option>
                 <?php
                 for ($m=1; $m<=12; $m++) {
@@ -164,7 +168,7 @@ foreach ($expenses as $ex) {
                 ?>
             </select>
             
-            <select name="year" class="py-2 pl-4 pr-8 rounded-xl text-sm font-semibold text-slate-700 cursor-pointer">
+            <select name="year" onchange="this.form.submit()" class="py-2 pl-4 pr-8 rounded-xl text-sm font-semibold text-slate-700 cursor-pointer">
                 <option value="">All Years</option>
                 <?php
                 $currY = date('Y');

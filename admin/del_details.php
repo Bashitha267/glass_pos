@@ -204,7 +204,7 @@ foreach ($customers as &$c) {
         SELECT di.*, 
         CASE 
             WHEN di.item_source = 'container' THEN b.name 
-            ELSE op.item_name 
+            ELSE opi.item_name 
         END as brand_name,
         CASE 
             WHEN di.item_source = 'container' THEN con.container_number 
@@ -214,7 +214,8 @@ foreach ($customers as &$c) {
         LEFT JOIN container_items ci ON di.item_id = ci.id AND di.item_source = 'container'
         LEFT JOIN brands b ON ci.brand_id = b.id 
         LEFT JOIN containers con ON ci.container_id = con.id 
-        LEFT JOIN other_purchases op ON di.item_id = op.id AND di.item_source = 'other'
+        LEFT JOIN other_purchase_items opi ON di.item_id = opi.id AND di.item_source = 'other'
+        LEFT JOIN other_purchases op ON opi.purchase_id = op.id AND di.item_source = 'other'
         WHERE di.delivery_customer_id = ?
     ");
     $stmt->execute([$c['id']]);

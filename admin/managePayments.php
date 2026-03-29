@@ -49,19 +49,37 @@ if ($action == 'save_payment') {
         }
 
         if ($tab === 'received') {
-            $stmt = $pdo->prepare("INSERT INTO delivery_payments (delivery_customer_id, amount, payment_type, bank_id, cheque_number, proof_image, payment_date, cheque_payer_name, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->execute([$ref_id, $amount, $type, $bank_id, $chq_no, $proof, $date, $chq_payer, $user_id]);
-            
-            // Update customer payment status
-            $stmtStatus = $pdo->prepare("SELECT dc.subtotal, dc.discount, (SELECT SUM(amount) FROM delivery_payments WHERE delivery_customer_id = dc.id) as total_paid FROM delivery_customers dc WHERE dc.id = ?");
-            $stmtStatus->execute([$ref_id]);
-            $status = $stmtStatus->fetch();
-            if ($status) {
-                $new_status = ($status['total_paid'] >= ($status['subtotal'] - $status['discount'])) ? 'completed' : 'pending';
-                $pdo->prepare("UPDATE delivery_customers SET payment_status = ? WHERE id = ?")->execute([$new_status, $ref_id]);
+            // ref_id is customer_id. We must distribute amount among pending deliveries.
+            $remaining = $amount;
+            $stmtPending = $pdo->prepare("
+                SELECT id, (subtotal - discount) as total, 
+                (SELECT COALESCE(SUM(amount), 0) FROM delivery_payments WHERE delivery_customer_id = dc.id) as paid 
+                FROM delivery_customers dc 
+                WHERE customer_id = ? AND payment_status = 'pending' 
+                ORDER BY created_at ASC
+            ");
+            $stmtPending->execute([$ref_id]);
+            $pending = $stmtPending->fetchAll();
+
+            foreach ($pending as $p) {
+                if ($remaining <= 0) break;
+                $due = $p['total'] - $p['paid'];
+                $pay_amount = min($remaining, $due);
+                
+                $stmt = $pdo->prepare("INSERT INTO delivery_payments (delivery_customer_id, amount, payment_type, bank_id, cheque_number, proof_image, payment_date, cheque_payer_name, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                $stmt->execute([$p['id'], $pay_amount, $type, $bank_id, $chq_no, $proof, $date, $chq_payer, $user_id]);
+                
+                $new_total_paid = $p['paid'] + $pay_amount;
+                $new_status = ($new_total_paid >= $p['total']) ? 'completed' : 'pending';
+                $pdo->prepare("UPDATE delivery_customers SET payment_status = ? WHERE id = ?")->execute([$new_status, $p['id']]);
+                
+                $remaining -= $pay_amount;
             }
+
+            // If still remaining (customer overpaid), apply to newest delivery or just leave it for now.
+            // For now, we assume remaining is 0 or user understands it applies to oldest.
         } else {
-            // tab === 'given' (Other Purchases)
+            // tab === 'given' (Other Purchases) - ref_id is purchase_id
             $stmt = $pdo->prepare("INSERT INTO other_purchase_payments (purchase_id, amount, payment_type, bank_id, cheque_number, proof_image, payment_date, cheque_payer_name, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
             $stmt->execute([$ref_id, $amount, $type, $bank_id, $chq_no, $proof, $date, $chq_payer, $user_id]);
         }
@@ -74,10 +92,15 @@ if ($action == 'save_payment') {
 if ($action == 'get_history') {
     $ref_id = (int)$_GET['ref_id'];
     if ($tab === 'received') {
+        // ref_id is customer_id
         $stmt = $pdo->prepare("
-            SELECT dp.*, b.name as bank_name, b.account_number as bank_acc, dp.cheque_payer_name as cheque_payer 
-            FROM delivery_payments dp LEFT JOIN banks b ON dp.bank_id = b.id 
-            WHERE dp.delivery_customer_id = ? ORDER BY dp.payment_date DESC
+            SELECT dp.*, b.name as bank_name, b.account_number as bank_acc, dp.cheque_payer_name as cheque_payer,
+                   dc.bill_number, CONCAT('DEL-', LPAD(dc.delivery_id, 4, '0')) as del_id
+            FROM delivery_payments dp 
+            JOIN delivery_customers dc ON dp.delivery_customer_id = dc.id
+            LEFT JOIN banks b ON dp.bank_id = b.id 
+            WHERE dc.customer_id = ? 
+            ORDER BY dp.payment_date DESC, dp.id DESC
         ");
     } else {
         $stmt = $pdo->prepare("
@@ -137,8 +160,8 @@ $params = [];
 if ($tab === 'received') {
     if ($search) {
         $s = "%$search%";
-        $where[] = "(c.name LIKE ? OR dc.bill_number LIKE ? OR CONCAT('DEL-', LPAD(dc.delivery_id, 4, '0')) LIKE ? OR EXISTS (SELECT 1 FROM delivery_payments dp WHERE dp.delivery_customer_id = dc.id AND dp.cheque_number LIKE ?))";
-        $params = array_merge($params, [$s, $s, $s, $s]);
+        $where[] = "(c.name LIKE ? OR dc.bill_number LIKE ? OR CONCAT('DEL-', LPAD(dc.delivery_id, 4, '0')) LIKE ?)";
+        $params = array_merge($params, [$s, $s, $s]);
     }
     if ($start_date) { $where[] = "d.delivery_date >= ?"; $params[] = $start_date; }
     if ($end_date) { $where[] = "d.delivery_date <= ?"; $params[] = $end_date; }
@@ -147,7 +170,6 @@ if ($tab === 'received') {
         $params[] = $month; $params[] = $year;
     }
     if ($status_filter) { $where[] = "dc.payment_status = ?"; $params[] = $status_filter; }
-    if ($p_type_filter) { $where[] = "EXISTS (SELECT 1 FROM delivery_payments dp WHERE dp.delivery_customer_id = dc.id AND dp.payment_type = ?)"; $params[] = $p_type_filter; }
 
     $whereClause = implode(" AND ", $where);
 
@@ -157,7 +179,19 @@ if ($tab === 'received') {
     $pendingBalanceQuery = "SELECT SUM(dc.subtotal - dc.discount - (SELECT COALESCE(SUM(amount), 0) FROM delivery_payments WHERE delivery_customer_id = dc.id)) as pending_total FROM delivery_customers dc JOIN deliveries d ON dc.delivery_id = d.id LEFT JOIN customers c ON dc.customer_id = c.id WHERE $whereClause";
     $pendingStmt = $pdo->prepare($pendingBalanceQuery); $pendingStmt->execute($params); $pending_total = $pendingStmt->fetchColumn();
 
-    $query = "SELECT dc.id, c.name as customer_name, d.delivery_date as date_field, dc.bill_number as ref_number, CONCAT('DEL-', LPAD(dc.delivery_id, 4, '0')) as display_id, (dc.subtotal - dc.discount) as total_amount, (SELECT COALESCE(SUM(amount), 0) FROM delivery_payments WHERE delivery_customer_id = dc.id) as total_paid FROM delivery_customers dc JOIN deliveries d ON dc.delivery_id = d.id JOIN customers c ON dc.customer_id = c.id WHERE $whereClause ORDER BY d.delivery_date DESC";
+    $query = "SELECT c.id, c.name as customer_name, MAX(d.delivery_date) as date_field, 
+                     'Customer Account' as ref_number, 'CUST' as display_id, 
+                     SUM(dc.subtotal - dc.discount) as total_amount, 
+                     (SELECT COALESCE(SUM(dp.amount), 0) 
+                      FROM delivery_payments dp 
+                      JOIN delivery_customers dc2 ON dp.delivery_customer_id = dc2.id 
+                      WHERE dc2.customer_id = c.id) as total_paid 
+              FROM customers c
+              JOIN delivery_customers dc ON c.id = dc.customer_id 
+              JOIN deliveries d ON dc.delivery_id = d.id 
+              WHERE $whereClause 
+              GROUP BY c.id 
+              ORDER BY date_field DESC";
     $stmt = $pdo->prepare($query); $stmt->execute($params); $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 } else {
@@ -365,11 +399,11 @@ if ($tab === 'received') {
                                 <span class="bg-indigo-50 text-indigo-700 px-3 py-1 rounded-lg text-[10px] font-black uppercase ring-1 ring-indigo-100"><?php echo htmlspecialchars($r['display_id']); ?></span>
                             </td>
                             <td class="px-6 py-4">
-                                <p class="text-sm font-black text-slate-800 uppercase tracking-tight"><?php echo htmlspecialchars($r['ref_number'] ?: 'N/A'); ?></p>
+                                <p class="text-sm font-black text-slate-800 uppercase tracking-tight"><?php echo htmlspecialchars($r['customer_name']); ?></p>
                             </td>
                             <td class="px-6 py-4">
-                                <p class="text-sm font-black text-slate-800 uppercase tracking-tight"><?php echo htmlspecialchars($r['customer_name']); ?></p>
-                                <p class="text-[9px] text-zinc-400 font-bold tracking-widest uppercase mt-0.5"><?php echo date('M j, Y', strtotime($r['date_field'])); ?></p>
+                                <p class="text-sm font-black text-slate-500 uppercase tracking-tight"><?php echo htmlspecialchars($r['ref_number']); ?></p>
+                                <p class="text-[9px] text-zinc-400 font-bold tracking-widest uppercase mt-0.5">Last Activity: <?php echo date('M j, Y', strtotime($r['date_field'])); ?></p>
                             </td>
                             <td class="px-6 py-4 font-black text-slate-900 text-sm">LKR <?php echo number_format($total, 2); ?></td>
                             <td class="px-6 py-4 font-black text-emerald-600 text-sm">LKR <?php echo number_format($paid, 2); ?></td>
@@ -381,7 +415,7 @@ if ($tab === 'received') {
                             </td>
                             <td class="px-6 py-4 text-right">
                                 <div class="flex items-center justify-end space-x-2">
-                                    <button onclick="openAddPayment(<?php echo $r['id']; ?>, '<?php echo addslashes($r['customer_name']); ?>', <?php echo $pending; ?>)" class="bg-emerald-600 hover:bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-emerald-500/10" <?php echo $isComplete ? 'disabled style="opacity:0.5;cursor:not-allowed"' : ''; ?>>
+                                    <button onclick="openAddPayment(<?php echo $r['id']; ?>, '<?php echo addslashes($r['customer_name']); ?>', <?php echo $pending; ?>)" class="bg-indigo-600 hover:bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg shadow-indigo-500/10" <?php echo $isComplete ? 'disabled style="opacity:0.5;cursor:not-allowed"' : ''; ?>>
                                         Add Pay
                                     </button>
                                     <button onclick="openHistory(<?php echo $r['id']; ?>, '<?php echo addslashes($r['customer_name']); ?>')" class="bg-slate-900 hover:bg-black text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg">
@@ -710,10 +744,15 @@ if ($tab === 'received') {
                     `;
 
                     res.data.forEach(p => {
+                        let refInfo = (currentTabMode === 'received') 
+                            ? `<p class="text-[9px] text-slate-400 mt-1 font-black uppercase">Ref: ${p.del_id} / ${p.bill_number || 'N/A'}</p>` 
+                            : '';
+                        
                         html += `
                             <tr class="text-[12px] font-bold text-slate-800 hover:bg-slate-50 transition-colors">
                                 <td class="py-4 px-2">
                                     <span class="bg-indigo-100 text-indigo-800 px-2.5 py-1.5 rounded-md text-[10px] uppercase font-black ring-1 ring-indigo-200">${p.payment_type}</span>
+                                    ${refInfo}
                                 </td>
                                 <td class="py-4 px-2 text-slate-800 font-extrabold">${new Date(p.payment_date).toLocaleDateString()}</td>
                                 <td class="py-4 px-2">
