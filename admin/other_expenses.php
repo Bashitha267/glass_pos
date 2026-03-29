@@ -194,14 +194,14 @@ foreach ($expenses as $ex) {
         <div class="max-w-6xl mx-auto space-y-6 animate-fade-in-up">
             
             <!-- Context Action Bar (Top Left Quick Buttons) -->
-            <div class="flex items-center justify-between">
-                <div class="flex items-center gap-3">
-                    <span class="text-xs font-black text-slate-400 uppercase tracking-widest pl-2">Quick Add:</span>
+            <div class="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
+                <div class="flex flex-wrap items-center gap-3">
+                    <span class="text-xs font-black text-slate-400 uppercase tracking-widest pl-2 w-full lg:w-auto">Quick Add:</span>
                     <button type="button" onclick="quickFill('Electricity Bill')" class="bg-amber-100 text-amber-700 hover:bg-amber-200 px-4 py-2 rounded-xl text-sm font-bold shadow-sm transition-all flex items-center gap-2">
-                        <i class="fa-solid fa-bolt"></i> Electricity
+                        <i class="fa-solid fa-bolt"></i> <span class="hidden sm:inline">Electricity</span><span class="sm:hidden">Elect</span>
                     </button>
                     <button type="button" onclick="quickFill('Water Bill')" class="bg-blue-100 text-blue-700 hover:bg-blue-200 px-4 py-2 rounded-xl text-sm font-bold shadow-sm transition-all flex items-center gap-2">
-                        <i class="fa-solid fa-droplet"></i> Water Bill
+                        <i class="fa-solid fa-droplet"></i> <span class="hidden sm:inline">Water Bill</span><span class="sm:hidden">Water</span>
                     </button>
                     <button type="button" onclick="quickFill('Tax Payment')" class="bg-rose-100 text-rose-700 hover:bg-rose-200 px-4 py-2 rounded-xl text-sm font-bold shadow-sm transition-all flex items-center gap-2">
                         <i class="fa-solid fa-file-invoice-dollar"></i> Tax
@@ -212,7 +212,7 @@ foreach ($expenses as $ex) {
                 </div>
                 
                 <!-- Stat Summary -->
-                <div class="bg-slate-900 text-white px-6 py-2 rounded-xl shadow-xl shadow-slate-900/20 flex items-center gap-4">
+                <div class="bg-slate-900 text-white px-6 py-2 rounded-xl shadow-xl shadow-slate-900/20 flex items-center gap-4 w-full lg:w-auto">
                     <i class="fa-solid fa-calculator opacity-50"></i>
                     <div>
                         <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Filtered</p>
@@ -222,7 +222,8 @@ foreach ($expenses as $ex) {
             </div>
 
             <div class="glass-card overflow-hidden">
-                <table class="w-full text-left border-collapse">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse min-w-[700px]">
                     <thead>
                         <tr class="bg-slate-50 border-b border-slate-200">
                             <th class="py-4 px-6 text-xs font-black text-slate-500 uppercase tracking-widest w-[120px]">Date</th>
