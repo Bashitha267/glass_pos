@@ -11,10 +11,14 @@ if ($action === 'delete_pos_sale') {
     try {
         $pdo->beginTransaction();
         $id = (int)$_POST['id'];
-        $old = $pdo->prepare("SELECT container_item_id, qty FROM pos_sale_items WHERE sale_id=?");
+        $old = $pdo->prepare("SELECT item_id, item_source, qty FROM pos_sale_items WHERE sale_id=?");
         $old->execute([$id]);
         foreach ($old->fetchAll() as $oi) {
-            $pdo->prepare("UPDATE container_items SET sold_qty=GREATEST(0,sold_qty-?) WHERE id=?")->execute([$oi['qty'],$oi['container_item_id']]);
+            if ($oi['item_source'] === 'container') {
+                $pdo->prepare("UPDATE container_items SET sold_qty=GREATEST(0,sold_qty-?) WHERE id=?")->execute([$oi['qty'], $oi['item_id']]);
+            } else {
+                $pdo->prepare("UPDATE other_purchase_items SET sold_qty=GREATEST(0,sold_qty-?) WHERE id=?")->execute([$oi['qty'], $oi['item_id']]);
+            }
         }
         $pdo->prepare("INSERT INTO pos_sale_audits (sale_id, action_type, notes, changed_by) VALUES (?,?,?,?)")->execute([$id,'DELETED',"Sale #$id deleted.",$user_id]);
         $pdo->prepare("DELETE FROM pos_sales WHERE id=?")->execute([$id]);
@@ -28,7 +32,15 @@ if ($action === 'delete_pos_sale') {
 if ($action === 'get_items') {
     $id = (int)($_GET['id'] ?? 0);
     $sale = $pdo->query("SELECT ps.*, c.name as customer_name, c.contact_number FROM pos_sales ps LEFT JOIN customers c ON ps.customer_id=c.id WHERE ps.id=$id")->fetch(PDO::FETCH_ASSOC);
-    $items = $pdo->query("SELECT psi.*, b.name as brand_name FROM pos_sale_items psi JOIN container_items ci ON psi.container_item_id=ci.id JOIN brands b ON ci.brand_id=b.id WHERE psi.sale_id=$id")->fetchAll(PDO::FETCH_ASSOC);
+    $items = $pdo->query("
+        SELECT psi.*, 
+        CASE WHEN psi.item_source = 'container' THEN b.name ELSE opi.item_name END as brand_name 
+        FROM pos_sale_items psi 
+        LEFT JOIN container_items ci ON psi.item_id=ci.id AND psi.item_source = 'container'
+        LEFT JOIN brands b ON ci.brand_id=b.id 
+        LEFT JOIN other_purchase_items opi ON psi.item_id=opi.id AND psi.item_source = 'other'
+        WHERE psi.sale_id=$id
+    ")->fetchAll(PDO::FETCH_ASSOC);
     $payments = $pdo->query("SELECT psp.*, b.name as bank_name FROM pos_sale_payments psp LEFT JOIN banks b ON psp.bank_id=b.id WHERE psp.sale_id=$id ORDER BY psp.created_at")->fetchAll(PDO::FETCH_ASSOC);
     echo json_encode(['success'=>true,'sale'=>$sale,'items'=>$items,'payments'=>$payments]);
     exit;

@@ -22,15 +22,21 @@ require_once '../config.php';
 $currentMonth = date('m');
 $currentYear = date('Y');
 
-// Total revenue
+// Total revenue (Deliveries + POS)
 $revStmt = $pdo->prepare("SELECT SUM(dc.subtotal - dc.discount) as total_earnings
                           FROM delivery_customers dc
                           JOIN deliveries d ON dc.delivery_id = d.id 
                           WHERE MONTH(d.delivery_date) = ? AND YEAR(d.delivery_date) = ?");
 $revStmt->execute([$currentMonth, $currentYear]);
-$dash_total_revenue = (float)$revStmt->fetchColumn();
+$del_revenue = (float)$revStmt->fetchColumn();
 
-// Total cost (COGS)
+// POS Sales revenue
+$posRev = (float)$pdo->query("SELECT COALESCE(SUM(grand_total),0) FROM pos_sales WHERE MONTH(sale_date) = $currentMonth AND YEAR(sale_date) = $currentYear")->fetchColumn();
+
+// COMBINED REVENUE for Header display
+$dash_total_revenue = $del_revenue + $posRev;
+
+// Total cost (COGS) - Deliveries
 $costStmt = $pdo->prepare("SELECT SUM(di.qty * di.cost_price)
                             FROM delivery_items di
                             JOIN delivery_customers dc ON di.delivery_customer_id = dc.id 
@@ -39,7 +45,7 @@ $costStmt = $pdo->prepare("SELECT SUM(di.qty * di.cost_price)
 $costStmt->execute([$currentMonth, $currentYear]);
 $dash_total_cost = (float)$costStmt->fetchColumn();
 
-// Total operational expenses
+// Total operational expenses (Deliveries)
 $expStmt = $pdo->prepare("SELECT SUM(amount) FROM delivery_expenses de 
                           JOIN deliveries d ON de.delivery_id = d.id 
                           WHERE MONTH(d.delivery_date) = ? AND YEAR(d.delivery_date) = ?");
@@ -51,7 +57,17 @@ $empStmt = $pdo->prepare("SELECT SUM(salary_amount) FROM employee_salary_payment
 $empStmt->execute([$currentMonth, $currentYear]);
 $dash_total_emp_payments = (float)$empStmt->fetchColumn();
 
-$dash_total_profit = $dash_total_revenue - $dash_total_cost - $dash_total_expenses - $dash_total_emp_payments;
+// POS Sales profit
+$posCost = (float)$pdo->query("SELECT COALESCE(SUM(psi.qty * psi.cost_price),0) FROM pos_sale_items psi JOIN pos_sales ps ON psi.sale_id=ps.id WHERE MONTH(ps.sale_date) = $currentMonth AND YEAR(ps.sale_date) = $currentYear")->fetchColumn();
+$posProfit = $posRev - $posCost;
+
+// Other Purchases (expenses)
+$opExp = (float)$pdo->query("SELECT COALESCE(SUM(grand_total),0) FROM other_purchases WHERE MONTH(purchase_date) = $currentMonth AND YEAR(purchase_date) = $currentYear")->fetchColumn();
+
+// Overhead Expenses (bills)
+$oeExp = (float)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM monthly_expenses WHERE MONTH(expense_date) = $currentMonth AND YEAR(expense_date) = $currentYear")->fetchColumn();
+
+$dash_total_profit = ($del_revenue - $dash_total_cost - $dash_total_expenses) + $posProfit - $dash_total_emp_payments - $opExp - $oeExp;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -208,7 +224,7 @@ $dash_total_profit = $dash_total_revenue - $dash_total_cost - $dash_total_expens
                 <div class="action-icon w-16 h-16 bg-blue-50 border-2 border-blue-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
                     <i class="fa-solid fa-boxes-stacked text-3xl text-blue-600"></i>
                 </div>
-                <h3 class="text-premium-label text-slate-800 group-hover:text-blue-600 transition-colors">Container Management</h3>
+                <h3 class="text-premium-label text-slate-800 group-hover:text-blue-600 transition-colors">Inventory</h3>
             </a>
             
                  <a href="managePayments.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
@@ -275,13 +291,27 @@ $dash_total_profit = $dash_total_revenue - $dash_total_cost - $dash_total_expens
             </a>
 
            
-
+            <!-- Cheque Management -->
+            <a href="cheque_managment.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
+                <div class="action-icon w-16 h-16 bg-teal-50 border-2 border-teal-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
+                    <i class="fa-solid fa-money-check-dollar text-3xl text-teal-600"></i>
+                </div>
+                <h3 class="text-premium-label text-slate-800 group-hover:text-teal-600 transition-colors">Cheque Management</h3>
+            </a>
             <!-- Reports Hub -->
             <a href="reports.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
                 <div class="action-icon w-16 h-16 bg-rose-50 border-2 border-rose-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm">
                     <i class="fa-solid fa-chart-line text-3xl text-rose-600"></i>
                 </div>
                 <h3 class="text-premium-label text-slate-800 group-hover:text-rose-600 transition-colors">Business Reports</h3>
+            </a>
+
+            <!-- Overhead Expenses -->
+            <a href="other_expenses.php" class="glass-card group p-8 flex flex-col items-center justify-center text-center">
+                <div class="action-icon w-16 h-16 bg-purple-50 border-2 border-purple-500/30 rounded-3xl flex items-center justify-center mb-6 shadow-sm group-hover:scale-110 transition-transform">
+                    <i class="fa-solid fa-file-invoice-dollar text-3xl text-purple-600"></i>
+                </div>
+                <h3 class="text-premium-label text-slate-800 group-hover:text-purple-600 transition-colors">Overhead Expenses</h3>
             </a>
         </div>
     </main>

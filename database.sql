@@ -132,14 +132,14 @@ CREATE TABLE IF NOT EXISTS delivery_customers (
 CREATE TABLE IF NOT EXISTS delivery_items (
     id INT AUTO_INCREMENT PRIMARY KEY,
     delivery_customer_id INT NOT NULL,
-    container_item_id INT NOT NULL,
+    item_id INT NOT NULL,
+    item_source ENUM('container', 'other') NOT NULL DEFAULT 'container',
     qty INT NOT NULL,
     damaged_qty INT DEFAULT 0,
     cost_price DECIMAL(15, 2) NOT NULL,
     selling_price DECIMAL(15, 2) NOT NULL,
     total DECIMAL(15, 2) NOT NULL,
-    FOREIGN KEY (delivery_customer_id) REFERENCES delivery_customers(id) ON DELETE CASCADE,
-    FOREIGN KEY (container_item_id) REFERENCES container_items(id)
+    FOREIGN KEY (delivery_customer_id) REFERENCES delivery_customers(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS delivery_ledger (
@@ -306,3 +306,49 @@ CREATE TABLE IF NOT EXISTS pos_sale_audits (
     FOREIGN KEY (sale_id) REFERENCES pos_sales(id) ON DELETE SET NULL,
     FOREIGN KEY (changed_by) REFERENCES users(id)
 );
+
+-- =====================================================
+-- Other Purchases (Without Containers)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS other_purchases (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    purchase_number VARCHAR(50) NOT NULL UNIQUE,
+    bill_number VARCHAR(50) DEFAULT NULL,
+    buyer_name VARCHAR(100) NOT NULL,
+    item_name VARCHAR(100) NOT NULL,
+    qty INT NOT NULL,
+    sold_qty INT DEFAULT 0,
+    buying_price DECIMAL(15, 2) NOT NULL,
+    price_per_item DECIMAL(15, 2) NOT NULL,
+    total_amount DECIMAL(15, 2) NOT NULL,
+    discount DECIMAL(15, 2) DEFAULT 0.00,
+    grand_total DECIMAL(15, 2) NOT NULL,
+    purchase_date DATE NOT NULL,
+    added_by INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (added_by) REFERENCES users(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS other_purchase_payments (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    purchase_id INT NOT NULL,
+    amount DECIMAL(15, 2) NOT NULL,
+    payment_type ENUM('Cash', 'Account Transfer', 'Cheque', 'Card') NOT NULL,
+    bank_id INT DEFAULT NULL,
+    cheque_number VARCHAR(50) DEFAULT NULL,
+    payment_date DATE NOT NULL,
+    description TEXT,
+    recorded_by INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (purchase_id) REFERENCES other_purchases(id) ON DELETE CASCADE,
+    FOREIGN KEY (bank_id) REFERENCES banks(id) ON DELETE SET NULL,
+    FOREIGN KEY (recorded_by) REFERENCES users(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS other_purchase_expenses (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    purchase_id INT NOT NULL,
+    expense_name VARCHAR(100) NOT NULL,
+    amount DECIMAL(15, 2) NOT NULL,
+    FOREIGN KEY (purchase_id) REFERENCES other_purchases(id) ON DELETE CASCADE
+) ENGINE=InnoDB;

@@ -24,15 +24,51 @@ if ($action === 'create_customer') {
 // â”€â”€ AJAX: search brand stock â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 if ($action === 'search_brand_stock') {
     $term = $_GET['term'] ?? '';
-    if (empty($term)) {
-        $s = $pdo->prepare("SELECT b.id as brand_id, b.name as brand_name, ci.id as item_id, ci.pallets, ci.qty_per_pallet, (ci.total_qty - ci.sold_qty) as available_qty, c.container_number, c.country, c.per_item_cost FROM container_items ci JOIN brands b ON ci.brand_id=b.id JOIN containers c ON ci.container_id=c.id WHERE (ci.total_qty - ci.sold_qty)>0 ORDER BY available_qty DESC LIMIT 5");
-        $s->execute();
-    } else {
-        $t = '%'.$term.'%';
-        $s = $pdo->prepare("SELECT b.id as brand_id, b.name as brand_name, ci.id as item_id, ci.pallets, ci.qty_per_pallet, (ci.total_qty - ci.sold_qty) as available_qty, c.container_number, c.country, c.per_item_cost FROM container_items ci JOIN brands b ON ci.brand_id=b.id JOIN containers c ON ci.container_id=c.id WHERE b.name LIKE ? AND (ci.total_qty - ci.sold_qty)>0 ORDER BY available_qty DESC LIMIT 10");
-        $s->execute([$t]);
+    $termParam = '%' . $term . '%';
+    
+    // Search from Container Items (Glass)
+    $query1 = "
+        SELECT b.id as brand_id, b.name as brand_name, 
+               ci.id as item_id, ci.pallets, ci.qty_per_pallet, (ci.total_qty - ci.sold_qty) as available_qty,
+               c.container_number, c.country, c.arrival_date, c.per_item_cost as cost_price,
+               'container' as item_source
+        FROM container_items ci
+        JOIN brands b ON ci.brand_id = b.id
+        JOIN containers c ON ci.container_id = c.id
+        WHERE (ci.total_qty - ci.sold_qty) > 0
+    ";
+    
+    if (!empty($term)) {
+        $query1 .= " AND b.name LIKE ?";
     }
-    echo json_encode($s->fetchAll(PDO::FETCH_ASSOC)); exit;
+
+    // Search from Other Purchases
+    $query2 = "
+        SELECT 0 as brand_id, opi.item_name as brand_name,
+               opi.id as item_id, 0 as pallets, 0 as qty_per_pallet, (opi.qty - opi.sold_qty) as available_qty,
+               op.purchase_number as container_number, 'Direct' as country, op.purchase_date as arrival_date, opi.price_per_item as cost_price,
+               'other' as item_source
+        FROM other_purchase_items opi
+        JOIN other_purchases op ON opi.purchase_id = op.id
+        WHERE (opi.qty - opi.sold_qty) > 0
+    ";
+    
+    if (!empty($term)) {
+        $query2 .= " AND opi.item_name LIKE ?";
+    }
+
+    $fullQuery = "($query1) UNION ALL ($query2) ORDER BY available_qty DESC LIMIT 10";
+    $stmt = $pdo->prepare($fullQuery);
+    
+    $params = [];
+    if (!empty($term)) {
+        $params[] = $termParam;
+        $params[] = $termParam;
+    }
+    
+    $stmt->execute($params);
+    echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+    exit;
 }
 
 // â”€â”€ AJAX: search bank â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -68,10 +104,14 @@ if ($action === 'save_pos_sale') {
 
         if ($editing_id) {
             // Revert old stock
-            $old = $pdo->prepare("SELECT container_item_id, qty FROM pos_sale_items WHERE sale_id=?");
+            $old = $pdo->prepare("SELECT item_id, item_source, qty FROM pos_sale_items WHERE sale_id=?");
             $old->execute([$editing_id]);
             foreach ($old->fetchAll() as $oi) {
-                $pdo->prepare("UPDATE container_items SET sold_qty=GREATEST(0,sold_qty-?) WHERE id=?")->execute([$oi['qty'],$oi['container_item_id']]);
+                if ($oi['item_source'] === 'container') {
+                    $pdo->prepare("UPDATE container_items SET sold_qty=GREATEST(0,sold_qty-?) WHERE id=?")->execute([$oi['qty'],$oi['item_id']]);
+                } else {
+                    $pdo->prepare("UPDATE other_purchase_items SET sold_qty=GREATEST(0,sold_qty-?) WHERE id=?")->execute([$oi['qty'],$oi['item_id']]);
+                }
             }
             $pdo->prepare("DELETE FROM pos_sale_items WHERE sale_id=?")->execute([$editing_id]);
             $sale_id = $editing_id;
@@ -93,12 +133,17 @@ if ($action === 'save_pos_sale') {
             $subtotal  += $lt;
             $item_disc += $isc;
 
-            $stk = $pdo->prepare("UPDATE container_items SET sold_qty=sold_qty+? WHERE id=? AND (total_qty-sold_qty)>=?");
+            $source = $it['item_source'] ?? 'container';
+            if ($source === 'container') {
+                $stk = $pdo->prepare("UPDATE container_items SET sold_qty=sold_qty+? WHERE id=? AND (total_qty-sold_qty)>=?");
+            } else {
+                $stk = $pdo->prepare("UPDATE other_purchase_items SET sold_qty=sold_qty+? WHERE id=? AND (qty-sold_qty)>=?");
+            }
             $stk->execute([$qty, $it['item_id'], $qty]);
-            if ($stk->rowCount() === 0) throw new Exception("Insufficient stock for ".htmlspecialchars($it['brand_name']??'item'));
+            if ($stk->rowCount() === 0) throw new Exception("Insufficient stock for ".htmlspecialchars($it['brand_name']??'item') . " ($source)");
 
-            $pdo->prepare("INSERT INTO pos_sale_items (sale_id, container_item_id, qty, damaged_qty, cost_price, selling_price, item_discount, line_total) VALUES (?,?,?,?,?,?,?,?)")
-                ->execute([$sale_id, $it['item_id'], $qty, $dmg, $cp, $sp, $isc, $lt]);
+            $pdo->prepare("INSERT INTO pos_sale_items (sale_id, item_id, item_source, qty, damaged_qty, cost_price, selling_price, item_discount, line_total) VALUES (?,?,?,?,?,?,?,?,?)")
+                ->execute([$sale_id, $it['item_id'], $source, $qty, $dmg, $cp, $sp, $isc, $lt]);
         }
 
         $bill_disc_val = ($bill_disc_t === 'percent') ? ($subtotal * $bill_disc / 100) : $bill_disc;
@@ -165,7 +210,22 @@ if ($action === 'get_pos_sale') {
     $id = (int)($_GET['id'] ?? 0);
     $sale = $pdo->query("SELECT ps.*, c.name as customer_name, c.contact_number, u.full_name as created_by_name FROM pos_sales ps LEFT JOIN customers c ON ps.customer_id=c.id JOIN users u ON ps.created_by=u.id WHERE ps.id=$id")->fetch(PDO::FETCH_ASSOC);
     if (!$sale) { echo json_encode(['success'=>false,'message'=>'Not found']); exit; }
-    $sale['items'] = $pdo->query("SELECT psi.*, b.name as brand_name, c.country, c.container_number, ci.pallets, ci.qty_per_pallet, (ci.total_qty-ci.sold_qty) as available_qty FROM pos_sale_items psi JOIN container_items ci ON psi.container_item_id=ci.id JOIN brands b ON ci.brand_id=b.id JOIN containers c ON ci.container_id=c.id WHERE psi.sale_id=$id")->fetchAll(PDO::FETCH_ASSOC);
+    $sale['items'] = $pdo->query("
+        SELECT psi.*, 
+        CASE WHEN psi.item_source = 'container' THEN b.name ELSE opi.item_name END as brand_name,
+        CASE WHEN psi.item_source = 'container' THEN c.country ELSE 'Direct' END as country,
+        CASE WHEN psi.item_source = 'container' THEN c.container_number ELSE op.purchase_number END as container_number,
+        CASE WHEN psi.item_source = 'container' THEN ci.pallets ELSE 0 END as pallets,
+        CASE WHEN psi.item_source = 'container' THEN ci.qty_per_pallet ELSE 0 END as qty_per_pallet,
+        CASE WHEN psi.item_source = 'container' THEN (ci.total_qty-ci.sold_qty) ELSE (opi.qty-opi.sold_qty) END as available_qty 
+        FROM pos_sale_items psi 
+        LEFT JOIN container_items ci ON psi.item_id=ci.id AND psi.item_source='container'
+        LEFT JOIN brands b ON ci.brand_id=b.id 
+        LEFT JOIN containers c ON ci.container_id=c.id 
+        LEFT JOIN other_purchase_items opi ON psi.item_id=opi.id AND psi.item_source='other'
+        LEFT JOIN other_purchases op ON opi.purchase_id=op.id
+        WHERE psi.sale_id=$id
+    ")->fetchAll(PDO::FETCH_ASSOC);
     $sale['payments'] = $pdo->query("SELECT psp.*, b.name as bank_name FROM pos_sale_payments psp LEFT JOIN banks b ON psp.bank_id=b.id WHERE psp.sale_id=$id ORDER BY psp.created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
     $sale['total_paid'] = array_sum(array_column($sale['payments'], 'amount'));
     echo json_encode(['success'=>true,'data'=>$sale]); exit;
@@ -176,10 +236,14 @@ if ($action === 'delete_pos_sale') {
     try {
         $pdo->beginTransaction();
         $id = (int)$_POST['id'];
-        $old = $pdo->prepare("SELECT container_item_id, qty FROM pos_sale_items WHERE sale_id=?");
+        $old = $pdo->prepare("SELECT item_id, item_source, qty FROM pos_sale_items WHERE sale_id=?");
         $old->execute([$id]);
         foreach ($old->fetchAll() as $oi) {
-            $pdo->prepare("UPDATE container_items SET sold_qty=GREATEST(0,sold_qty-?) WHERE id=?")->execute([$oi['qty'],$oi['container_item_id']]);
+            if ($oi['item_source'] === 'container') {
+                $pdo->prepare("UPDATE container_items SET sold_qty=GREATEST(0,sold_qty-?) WHERE id=?")->execute([$oi['qty'],$oi['item_id']]);
+            } else {
+                $pdo->prepare("UPDATE other_purchase_items SET sold_qty=GREATEST(0,sold_qty-?) WHERE id=?")->execute([$oi['qty'],$oi['item_id']]);
+            }
         }
         $pdo->prepare("INSERT INTO pos_sale_audits (sale_id, action_type, notes, changed_by) VALUES (?,?,?,?)")->execute([$id,'DELETED',"Sale #$id deleted.",$user_id]);
         $pdo->prepare("DELETE FROM pos_sales WHERE id=?")->execute([$id]);
@@ -596,7 +660,21 @@ function addItem(itemId) {
   document.getElementById('item_results').classList.add('hidden');
   document.getElementById('item_search').value = '';
   const id = Date.now() + '' + Math.floor(Math.random()*100);
-  saleItems.push({rowId:id, item_id:it.item_id, brand_name:it.brand_name, available_qty:parseInt(it.available_qty), pallets:it.pallets, country:it.country, cost_price:parseFloat(it.per_item_cost)||0, selling_price:0, qty:1, damaged_qty:0, item_discount:0, line_total:0});
+  saleItems.push({
+    rowId:id, 
+    item_id:it.item_id, 
+    item_source: it.item_source,
+    brand_name:it.brand_name, 
+    available_qty:parseInt(it.available_qty), 
+    pallets:it.pallets, 
+    country:it.country, 
+    cost_price:parseFloat(it.cost_price)||0, 
+    selling_price:0, 
+    qty:1, 
+    damaged_qty:0, 
+    item_discount:0, 
+    line_total:0
+  });
   renderItemsTable();
 }
 
@@ -785,9 +863,14 @@ function doSaveSale(payMethod, callback, silent=false) {
   fd.append('bill_discount', billDiscVal);
   fd.append('bill_discount_type', billDiscType);
   fd.append('items', JSON.stringify(saleItems.map(it => ({
-    item_id:it.item_id, brand_name:it.brand_name, qty:it.qty,
-    damaged_qty:it.damaged_qty, cost_price:it.cost_price,
-    selling_price:it.selling_price, item_discount:it.item_discount
+    item_id:it.item_id, 
+    item_source: it.item_source,
+    brand_name:it.brand_name, 
+    qty:it.qty,
+    damaged_qty:it.damaged_qty, 
+    cost_price:it.cost_price,
+    selling_price:it.selling_price, 
+    item_discount:it.item_discount
   }))));
   fetch('', {method:'POST', body:fd}).then(r=>r.json()).then(res => {
     document.getElementById('saving-indicator').classList.add('hidden');

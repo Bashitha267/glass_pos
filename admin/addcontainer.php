@@ -17,7 +17,7 @@ $action = $_GET['action'] ?? $_POST['action'] ?? null;
 if ($action == 'get_next_number') {
     $stmt = $pdo->query("SELECT container_number FROM containers ORDER BY id DESC LIMIT 1");
     $last = $stmt->fetchColumn();
-    
+
     // Fallback if no containers exist
     if (!$last) {
         echo json_encode(['success' => true, 'next' => '0001']);
@@ -25,7 +25,7 @@ if ($action == 'get_next_number') {
     }
 
     // Try to extract number and increment
-    $num = (int)$last;
+    $num = (int) $last;
     $next = str_pad($num + 1, 4, '0', STR_PAD_LEFT);
     echo json_encode(['success' => true, 'next' => $next]);
     exit;
@@ -41,12 +41,12 @@ if ($action == 'search_brand') {
 
 if ($action == 'get_details') {
     $container_no = $_GET['container_number'];
-    
+
     // Get Container
     $stmt = $pdo->prepare("SELECT * FROM containers WHERE container_number = ?");
     $stmt->execute([$container_no]);
     $container = $stmt->fetch(PDO::FETCH_ASSOC);
-    
+
     if (!$container) {
         echo json_encode(['success' => false, 'message' => 'Container not found']);
         exit;
@@ -77,16 +77,16 @@ if ($action == 'delete_container') {
     try {
         $container_id = $_POST['container_id'];
         $pdo->beginTransaction();
-        
+
         // Delete dependencies first
         $pdo->prepare("DELETE FROM container_items WHERE container_id = ?")->execute([$container_id]);
         $pdo->prepare("DELETE FROM container_expenses WHERE container_id = ?")->execute([$container_id]);
         $pdo->prepare("DELETE FROM container_ledger WHERE container_id = ?")->execute([$container_id]);
-        
+
         // Delete container
         $stmt = $pdo->prepare("DELETE FROM containers WHERE id = ?");
         $stmt->execute([$container_id]);
-        
+
         if ($stmt->rowCount()) {
             $pdo->commit();
             echo json_encode(['success' => true]);
@@ -94,13 +94,163 @@ if ($action == 'delete_container') {
             throw new Exception("Container not found or already deleted.");
         }
     } catch (Exception $e) {
+        if ($pdo->inTransaction())
+            $pdo->rollBack();
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    }
+    exit;
+}
+// --- Other Purchases Actions ---
+if ($action == 'get_next_purchase_number') {
+    $stmt = $pdo->query("SELECT purchase_number FROM other_purchases ORDER BY id DESC LIMIT 1");
+    $last = $stmt->fetchColumn();
+    if (!$last) {
+        echo json_encode(['success' => true, 'next' => 'P-0001']);
+    } else {
+        preg_match('/P-(\d+)/', $last, $matches);
+        $num = isset($matches[1]) ? (int)$matches[1] : 0;
+        $next = 'P-' . str_pad($num + 1, 4, '0', STR_PAD_LEFT);
+        echo json_encode(['success' => true, 'next' => $next]);
+    }
+    exit;
+}
+
+if ($action == 'search_buyer') {
+    $term = '%' . $_GET['term'] . '%';
+    $stmt = $pdo->prepare("SELECT DISTINCT buyer_name FROM other_purchases WHERE buyer_name LIKE ? LIMIT 5");
+    $stmt->execute([$term]);
+    echo json_encode($stmt->fetchAll(PDO::FETCH_COLUMN));
+    exit;
+}
+
+if ($action == 'search_bank') {
+    $term = '%' . $_GET['term'] . '%';
+    $stmt = $pdo->prepare("SELECT name FROM banks WHERE name LIKE ? LIMIT 5");
+    $stmt->execute([$term]);
+    echo json_encode($stmt->fetchAll(PDO::FETCH_COLUMN));
+    exit;
+}
+
+if ($action == 'save_purchase') {
+    try {
+        $pdo->beginTransaction();
+        $purchase_no = $_POST['purchase_number'];
+        $bill_no = $_POST['bill_number'] ?? null;
+        $buyer_name = $_POST['buyer_name'] ?? '';
+        $discount = (float)($_POST['discount'] ?? 0);
+        $purchase_date = $_POST['purchase_date'] ?? date('Y-m-d');
+        
+        $items = json_decode($_POST['items'] ?? '[]', true);
+        $expenses = json_decode($_POST['expenses'] ?? '[]', true);
+        $payments = json_decode($_POST['payments'] ?? '[]', true);
+
+        // calculate totals
+        $total_amount = 0;
+        foreach($items as $it) {
+            $total_amount += ((int)$it['qty'] * (float)$it['price']);
+        }
+        
+        $other_exp_total = 0;
+        foreach($expenses as $ex) $other_exp_total += (float)($ex['amount'] ?? 0);
+        
+        $grand_total = $total_amount + $other_exp_total - $discount;
+
+        $stmt = $pdo->prepare("INSERT INTO other_purchases (purchase_number, bill_number, buyer_name, total_amount, discount, grand_total, purchase_date, added_by) 
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?) 
+                               ON DUPLICATE KEY UPDATE 
+                               bill_number = VALUES(bill_number),
+                               buyer_name = VALUES(buyer_name),
+                               total_amount = VALUES(total_amount),
+                               discount = VALUES(discount),
+                               grand_total = VALUES(grand_total),
+                               purchase_date = VALUES(purchase_date)");
+        $stmt->execute([$purchase_no, $bill_no, $buyer_name, $total_amount, $discount, $grand_total, $purchase_date, $user_id]);
+        
+        $stmt = $pdo->prepare("SELECT id FROM other_purchases WHERE purchase_number = ?");
+        $stmt->execute([$purchase_no]);
+        $purchase_id = $stmt->fetchColumn();
+
+        // Items
+        $pdo->prepare("DELETE FROM other_purchase_items WHERE purchase_id = ?")->execute([$purchase_id]);
+        foreach ($items as $it) {
+            $qty = (int)$it['qty'];
+            $price = (float)$it['price'];
+            $lineTotal = $qty * $price;
+            if (empty($it['name']) || $qty <= 0) continue;
+            $pdo->prepare("INSERT INTO other_purchase_items (purchase_id, item_name, qty, price_per_item, line_total) VALUES (?, ?, ?, ?, ?)")->execute([$purchase_id, $it['name'], $qty, $price, $lineTotal]);
+        }
+
+        // Expenses
+        $pdo->prepare("DELETE FROM other_purchase_expenses WHERE purchase_id = ?")->execute([$purchase_id]);
+        foreach ($expenses as $exp) {
+            if (empty($exp['name']) || $exp['amount'] <= 0) continue;
+            $pdo->prepare("INSERT INTO other_purchase_expenses (purchase_id, expense_name, amount) VALUES (?, ?, ?)")->execute([$purchase_id, $exp['name'], $exp['amount']]);
+        }
+
+        // Payments
+        $pdo->prepare("DELETE FROM other_purchase_payments WHERE purchase_id = ?")->execute([$purchase_id]);
+        foreach ($payments as $pay) {
+            if ($pay['amount'] <= 0) continue;
+            
+            $bank_id = null;
+            if ($pay['method'] === 'Account Transfer' || $pay['method'] === 'Cheque') {
+                if (!empty($pay['bank_name'])) {
+                    $bStmt = $pdo->prepare("SELECT id FROM banks WHERE name = ?");
+                    $bStmt->execute([$pay['bank_name']]);
+                    $bank_id = $bStmt->fetchColumn();
+                    if (!$bank_id) {
+                        $pdo->prepare("INSERT INTO banks (name) VALUES (?)")->execute([$pay['bank_name']]);
+                        $bank_id = $pdo->lastInsertId();
+                    }
+                }
+            }
+
+            $pdo->prepare("INSERT INTO other_purchase_payments (purchase_id, amount, payment_type, bank_id, cheque_number, payment_date, description, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+                ->execute([$purchase_id, $pay['amount'], $pay['method'], $bank_id, $pay['cheque_number'] ?? null, $pay['payment_date'] ?? date('Y-m-d'), $pay['description'] ?? '', $user_id]);
+        }
+
+        $pdo->commit();
+        echo json_encode(['success' => true]);
+    } catch (Exception $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
         echo json_encode(['success' => false, 'message' => $e->getMessage()]);
     }
     exit;
 }
 
-// Handle AJAX Save Container
+if ($action == 'get_purchase_details') {
+    $id = $_GET['id'];
+    $stmt = $pdo->prepare("SELECT * FROM other_purchases WHERE id = ?");
+    $stmt->execute([$id]);
+    $purchase = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if ($purchase) {
+        $stmt = $pdo->prepare("SELECT * FROM other_purchase_items WHERE purchase_id = ?");
+        $stmt->execute([$id]);
+        $purchase['items'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $stmt = $pdo->prepare("SELECT * FROM other_purchase_expenses WHERE purchase_id = ?");
+        $stmt->execute([$id]);
+        $purchase['expenses'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $stmt = $pdo->prepare("SELECT p.*, b.name as bank_name FROM other_purchase_payments p LEFT JOIN banks b ON p.bank_id = b.id WHERE p.purchase_id = ?");
+        $stmt->execute([$id]);
+        $purchase['payments'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        echo json_encode(['success' => true, 'data' => $purchase]);
+    } else {
+        echo json_encode(['success' => false, 'message' => 'Purchase not found']);
+    }
+    exit;
+}
+
+if ($action == 'delete_purchase') {
+    $id = $_POST['id'];
+    $stmt = $pdo->prepare("DELETE FROM other_purchases WHERE id = ?");
+    $stmt->execute([$id]);
+    echo json_encode(['success' => $stmt->rowCount() > 0]);
+    exit;
+}
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] == 'save_container') {
     try {
         $pdo->beginTransaction();
@@ -109,20 +259,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $arrival_date = $_POST['arrival_date'];
         $expenses = json_decode($_POST['expenses'], true);
         $items = json_decode($_POST['items'], true);
-        $damaged_qty = (int)($_POST['damaged_qty'] ?? 0);
-        $container_cost = (float)($_POST['container_cost'] ?? 0);
+        $damaged_qty = (int) ($_POST['damaged_qty'] ?? 0);
+        $container_cost = (float) ($_POST['container_cost'] ?? 0);
         $country = $_POST['country'] ?? null;
 
         // 1. Calculate totals
         $other_expenses = 0;
         foreach ($expenses as $exp) {
-            $other_expenses += (float)$exp['amount'];
+            $other_expenses += (float) $exp['amount'];
         }
         $total_expenses = $other_expenses + $container_cost;
 
         $total_qty = 0;
         foreach ($items as $item) {
-            $total_qty += (int)$item['pallets'] * (int)$item['qty_per_pallet'];
+            $total_qty += (int) $item['pallets'] * (int) $item['qty_per_pallet'];
         }
 
         $net_qty = $total_qty - $damaged_qty;
@@ -145,10 +295,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                                per_item_cost = VALUES(per_item_cost),
                                country = VALUES(country)");
         $stmt->execute([$container_no, $arrival_date, $user_id, $total_expenses, $container_cost, $total_qty, $damaged_qty, $per_item_cost, $country]);
-        
+
         if ($old_container) {
             $container_id = $old_container['id'];
-            
+
             // Log Total Qty change (requested)
             if ($old_container['total_qty'] != $total_qty) {
                 $ledgerStmt = $pdo->prepare("INSERT INTO container_ledger (container_id, action_type, field_name, old_value, new_value, changed_by) VALUES (?, 'UPDATE', 'total_qty', ?, ?, ?)");
@@ -189,10 +339,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         // 3. Handle Items & Brands
         // Clear existing items for this container if updating
         $pdo->prepare("DELETE FROM container_items WHERE container_id = ?")->execute([$container_id]);
-        
+
         foreach ($items as $item) {
             $brand_name = trim($item['brand']);
-            if (!$brand_name) continue;
+            if (!$brand_name)
+                continue;
 
             // Ensure brand exists
             $stmt = $pdo->prepare("SELECT id FROM brands WHERE name = ?");
@@ -205,8 +356,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                 $brand_id = $pdo->lastInsertId();
             }
 
-            $pallets = (int)$item['pallets'];
-            $qty_per_pallet = (int)$item['qty_per_pallet'];
+            $pallets = (int) $item['pallets'];
+            $qty_per_pallet = (int) $item['qty_per_pallet'];
             $line_total = $pallets * $qty_per_pallet;
 
             $stmt = $pdo->prepare("INSERT INTO container_items (container_id, brand_id, pallets, qty_per_pallet, total_qty) VALUES (?, ?, ?, ?, ?)");
@@ -216,28 +367,30 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         // 4. Handle Expenses
         $pdo->prepare("DELETE FROM container_expenses WHERE container_id = ?")->execute([$container_id]);
         foreach ($expenses as $exp) {
-            if (!$exp['name'] || $exp['amount'] <= 0) continue;
+            if (!$exp['name'] || $exp['amount'] <= 0)
+                continue;
             $stmt = $pdo->prepare("INSERT INTO container_expenses (container_id, expense_name, amount) VALUES (?, ?, ?)");
             $stmt->execute([$container_id, $exp['name'], $exp['amount']]);
-            
+
             // Log Expense (truncated description for safety)
-            $desc = substr('Added Expense: '.$exp['name'], 0, 50);
+            $desc = substr('Added Expense: ' . $exp['name'], 0, 50);
             $lStmt = $pdo->prepare("INSERT INTO container_ledger (container_id, action_type, field_name, new_value, changed_by) VALUES (?, 'EXPENSE', ?, ?, ?)");
-            $lStmt->execute([$container_id, $desc, "Rs. ".number_format((float)$exp['amount'], 2), $user_id]);
+            $lStmt->execute([$container_id, $desc, "Rs. " . number_format((float) $exp['amount'], 2), $user_id]);
         }
 
         // 5. Handle Payments
         $payments = json_decode($_POST['payments'], true);
         $pdo->prepare("DELETE FROM container_payments WHERE container_id = ?")->execute([$container_id]);
         foreach ($payments as $pay) {
-            if ($pay['amount'] <= 0) continue;
+            if ($pay['amount'] <= 0)
+                continue;
             $stmt = $pdo->prepare("INSERT INTO container_payments (container_id, payment_id, payment_type, method, amount, description) VALUES (?, ?, ?, ?, ?, ?)");
             $stmt->execute([$container_id, $pay['payment_id'], $pay['type'], $pay['method'], $pay['amount'], $pay['desc']]);
-            
+
             // Log Payment (truncated description for safety)
-            $method_desc = substr('Payment Method: '.$pay['method'], 0, 50);
+            $method_desc = substr('Payment Method: ' . $pay['method'], 0, 50);
             $lStmt = $pdo->prepare("INSERT INTO container_ledger (container_id, action_type, field_name, new_value, changed_by) VALUES (?, 'PAYMENT', ?, ?, ?)");
-            $lStmt->execute([$container_id, $method_desc, "Rs. ".number_format((float)$pay['amount'], 2), $user_id]);
+            $lStmt->execute([$container_id, $method_desc, "Rs. " . number_format((float) $pay['amount'], 2), $user_id]);
         }
 
         // 6. Final Ledger Entry
@@ -258,6 +411,7 @@ $search = $_GET['search'] ?? '';
 $start_date = $_GET['start_date'] ?? '';
 $end_date = $_GET['end_date'] ?? '';
 $payment_status = $_GET['payment_status'] ?? '';
+$current_tab = $_GET['tab'] ?? 'containers';
 
 // Pagination settings
 $limit = 8;
@@ -267,48 +421,80 @@ $offset = ($page - 1) * $limit;
 $where = [];
 $params = [];
 
-if ($search) {
-    $where[] = "(c.container_number LIKE ? OR b.name LIKE ?)";
-    $params[] = "%$search%";
-    $params[] = "%$search%";
+if ($current_tab === 'other') {
+    if ($search) {
+        $where[] = "(purchase_number LIKE ? OR buyer_name LIKE ? OR bill_number LIKE ?)";
+        $params[] = "%$search%"; $params[] = "%$search%"; $params[] = "%$search%";
+    }
+    if ($start_date) { $where[] = "purchase_date >= ?"; $params[] = $start_date; }
+    if ($end_date) { $where[] = "purchase_date <= ?"; $params[] = $end_date; }
+
+    if ($payment_status === 'pending') {
+        $where[] = "grand_total > (SELECT COALESCE(SUM(amount), 0) FROM other_purchase_payments WHERE purchase_id = other_purchases.id)";
+    } elseif ($payment_status === 'completed') {
+        $where[] = "grand_total <= (SELECT COALESCE(SUM(amount), 0) FROM other_purchase_payments WHERE purchase_id = other_purchases.id)";
+    }
+
+    $whereClause = $where ? "WHERE " . implode(" AND ", $where) : "";
+
+    $countStmt = $pdo->prepare("SELECT COUNT(*) FROM other_purchases $whereClause");
+    $countStmt->execute($params);
+    $total_records = $countStmt->fetchColumn();
+    $total_pages = ceil($total_records / $limit);
+
+    $query = "SELECT *, 
+              (SELECT GROUP_CONCAT(item_name SEPARATOR ', ') FROM other_purchase_items WHERE purchase_id = other_purchases.id) as item_names,
+              (SELECT SUM(qty) FROM other_purchase_items WHERE purchase_id = other_purchases.id) as total_qty,
+              COALESCE((SELECT SUM(amount) FROM other_purchase_payments WHERE purchase_id = other_purchases.id), 0) as total_paid
+              FROM other_purchases 
+              $whereClause 
+              ORDER BY id DESC LIMIT $limit OFFSET $offset";
+    $stmt = $pdo->prepare($query);
+    $stmt->execute($params);
+    $records = $stmt->fetchAll();
+} else {
+    // Containers Tab logic
+    if ($search) {
+        $where[] = "(c.container_number LIKE ? OR b.name LIKE ?)";
+        $params[] = "%$search%"; $params[] = "%$search%";
+    }
+    if ($start_date) { $where[] = "c.arrival_date >= ?"; $params[] = $start_date; }
+    if ($end_date) { $where[] = "c.arrival_date <= ?"; $params[] = $end_date; }
+
+    if ($payment_status === 'pending') {
+        $where[] = "c.total_expenses > (SELECT COALESCE(SUM(amount), 0) FROM container_payments WHERE container_id = c.id)";
+    } elseif ($payment_status === 'completed') {
+        $where[] = "c.total_expenses <= (SELECT COALESCE(SUM(amount), 0) FROM container_payments WHERE container_id = c.id)";
+    }
+
+    $whereClause = $where ? "WHERE " . implode(" AND ", $where) : "";
+
+    $countQuery = "SELECT COUNT(DISTINCT c.id) FROM containers c
+                   LEFT JOIN container_items ci ON c.id = ci.container_id
+                   LEFT JOIN brands b ON ci.brand_id = b.id
+                   $whereClause";
+    $countStmt = $pdo->prepare($countQuery);
+    $countStmt->execute($params);
+    $total_records = $countStmt->fetchColumn();
+    $total_pages = ceil($total_records / $limit);
+
+    $query = "SELECT c.*, b.name as brand_name,
+              COALESCE((SELECT SUM(amount) FROM container_payments WHERE container_id = c.id), 0) as total_paid
+              FROM containers c
+              LEFT JOIN (SELECT container_id, MIN(brand_id) as brand_id FROM container_items GROUP BY container_id) ci ON c.id = ci.container_id
+              LEFT JOIN brands b ON ci.brand_id = b.id
+              $whereClause
+              ORDER BY CAST(c.container_number AS UNSIGNED) DESC, c.arrival_date DESC
+              LIMIT $limit OFFSET $offset";
+
+    $stmt = $pdo->prepare($query);
+    $stmt->execute($params);
+    $records = $stmt->fetchAll();
 }
-if ($start_date) { $where[] = "c.arrival_date >= ?"; $params[] = $start_date; }
-if ($end_date) { $where[] = "c.arrival_date <= ?"; $params[] = $end_date; }
-
-if ($payment_status === 'pending') {
-    $where[] = "c.total_expenses > (SELECT COALESCE(SUM(amount), 0) FROM container_payments WHERE container_id = c.id)";
-} elseif ($payment_status === 'completed') {
-    $where[] = "c.total_expenses <= (SELECT COALESCE(SUM(amount), 0) FROM container_payments WHERE container_id = c.id)";
-}
-
-$whereClause = $where ? "WHERE " . implode(" AND ", $where) : "";
-
-// Count total for pagination
-$countQuery = "SELECT COUNT(DISTINCT c.id) FROM containers c
-               LEFT JOIN container_items ci ON c.id = ci.container_id
-               LEFT JOIN brands b ON ci.brand_id = b.id
-               $whereClause";
-$countStmt = $pdo->prepare($countQuery);
-$countStmt->execute($params);
-$total_records = $countStmt->fetchColumn();
-$total_pages = ceil($total_records / $limit);
-
-// Fetch Containers with joined Brand and Total Paid aggregation
-$query = "SELECT c.*, b.name as brand_name,
-          COALESCE((SELECT SUM(amount) FROM container_payments WHERE container_id = c.id), 0) as total_paid
-          FROM containers c
-          LEFT JOIN (SELECT container_id, MIN(brand_id) as brand_id FROM container_items GROUP BY container_id) ci ON c.id = ci.container_id
-          LEFT JOIN brands b ON ci.brand_id = b.id
-          $whereClause
-          ORDER BY CAST(c.container_number AS UNSIGNED) DESC, c.arrival_date DESC
-          LIMIT $limit OFFSET $offset";
-
-$stmt = $pdo->prepare($query);
-$stmt->execute($params);
-$containers = $stmt->fetchAll();
 ?>
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -317,6 +503,7 @@ $containers = $stmt->fetchAll();
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;600;700&display=swap');
+
         body {
             font-family: 'Inter', sans-serif;
             background: url('../assests/glass_bg.png') no-repeat center center fixed;
@@ -324,12 +511,14 @@ $containers = $stmt->fetchAll();
             color: #0f172a;
             min-height: 100vh;
         }
+
         .glass-header {
             background: rgba(241, 245, 249, 0.95);
             backdrop-filter: blur(20px);
             border-bottom: 1px solid rgba(226, 232, 240, 0.8);
             box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.08);
         }
+
         .glass-card {
             background: rgba(255, 255, 255, 0.85);
             backdrop-filter: blur(20px);
@@ -337,12 +526,14 @@ $containers = $stmt->fetchAll();
             border-radius: 20px;
             box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
         }
+
         .container-modal {
             background: rgba(255, 255, 255, 0.9);
             backdrop-filter: blur(2px);
             border: 1px solid rgba(255, 255, 255, 1);
             color: #121822ff;
         }
+
         .input-glass {
             background: rgba(255, 255, 255, 0.6);
             border: 1px solid rgba(203, 213, 225, 0.6);
@@ -352,11 +543,13 @@ $containers = $stmt->fetchAll();
             outline: none;
             transition: all 0.3s;
         }
+
         .input-glass:focus {
             border-color: #0891b2;
             background: white;
             box-shadow: 0 0 20px rgba(8, 145, 178, 0.1);
         }
+
         .btn-freq {
             background: rgba(8, 145, 178, 0.1);
             border: 1px solid rgba(8, 145, 178, 0.2);
@@ -367,14 +560,40 @@ $containers = $stmt->fetchAll();
             transition: all 0.3s;
             font-weight: 600;
         }
+
         .btn-freq:hover {
             background: rgba(8, 145, 178, 0.2);
             transform: translateY(-1px);
         }
-        .text-glass-muted { color: #64748b; }
-        .border-glass { border-color: rgba(203, 213, 225, 0.4); }
+
+        .text-glass-muted {
+            color: #64748b;
+        }
+
+        .border-glass {
+            border-color: rgba(203, 213, 225, 0.4);
+        }
+
+        /* Tab Styles */
+        .tab-btn {
+            padding: 12px 24px;
+            font-weight: 700;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            transition: all 0.3s;
+            border-bottom: 3px solid transparent;
+            color: #64748b;
+        }
+
+        .tab-btn.active {
+            border-bottom-color: #0891b2;
+            color: #0891b2;
+            background: rgba(8, 145, 178, 0.05);
+        }
     </style>
 </head>
+
 <body class="flex flex-col">
 
     <header class="glass-header sticky top-0 z-40 py-3">
@@ -383,46 +602,80 @@ $containers = $stmt->fetchAll();
                 <a href="dashboard.php" class="text-slate-800 hover:text-cyan-600 transition-colors">
                     <i class="fa-solid fa-arrow-left text-lg sm:text-xl"></i>
                 </a>
-                <h1 class="text-xl sm:text-2xl font-bold tracking-tight uppercase truncate max-w-[200px] sm:max-w-none text-slate-800">Container Registry</h1>
+                <h1
+                    class="text-xl sm:text-2xl font-bold tracking-tight uppercase truncate max-w-[200px] sm:max-w-none text-slate-800">
+                    Inventory Registry</h1>
             </div>
-            <button id="btn-add-container" onclick="openModal()" class="bg-cyan-600 hover:bg-cyan-500 text-white px-3 sm:px-5 py-2 lg:py-2.5 rounded-xl font-bold text-xs sm:text-sm uppercase transition-all shadow-lg flex items-center space-x-2">
-                <i class="fa-solid fa-plus text-[10px] sm:text-xs text-white"></i>
-                <span class="hidden xs:inline">Add Container</span>
-                <span class="xs:hidden">Add a New Container</span>
-            </button>
+            <?php if ($current_tab === 'other'): ?>
+                <button id="btn-add-purchase" onclick="openPurchaseModal()"
+                    class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 sm:px-5 py-2 lg:py-2.5 rounded-xl font-bold text-xs sm:text-sm uppercase transition-all shadow-lg flex items-center space-x-2">
+                    <i class="fa-solid fa-plus text-[10px] sm:text-xs"></i>
+                    <span class="hidden xs:inline">Add Purchase</span>
+                    <span class="xs:hidden">Add Purchase</span>
+                </button>
+            <?php else: ?>
+                <button id="btn-add-container" onclick="openModal()"
+                    class="bg-cyan-600 hover:bg-cyan-500 text-white px-3 sm:px-5 py-2 lg:py-2.5 rounded-xl font-bold text-xs sm:text-sm uppercase transition-all shadow-lg flex items-center space-x-2">
+                    <i class="fa-solid fa-plus text-[10px] sm:text-xs text-white"></i>
+                    <span class="hidden xs:inline">Add Container</span>
+                    <span class="xs:hidden">Add a New Container</span>
+                </button>
+            <?php endif; ?>
+        </div>
+        <!-- Tabs -->
+        <div class="px-10 mt-4 flex border-b border-slate-200">
+            <a href="?tab=containers" class="tab-btn <?php echo $current_tab === 'containers' ? 'active' : ''; ?>">Container
+                Registry</a>
+            <a href="?tab=other" class="tab-btn <?php echo $current_tab === 'other' ? 'active' : ''; ?>">Other Purchases</a>
         </div>
     </header>
 
+    <!-- MAIN_SECTION_START -->
     <main class="w-full px-6 py-8 sm:py-10">
         <!-- Filters Bar -->
         <div class="glass-card bg-slate-800/80 p-4 sm:p-6 mb-8 border-slate-700">
-            <form id="filter-form" method="GET" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-4 items-end" onsubmit="event.preventDefault();">
+            <form id="filter-form" method="GET" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-4 items-end"
+                onsubmit="event.preventDefault();">
+                <input type="hidden" name="tab" value="<?php echo htmlspecialchars($current_tab); ?>">
                 <div class="sm:col-span-2 lg:col-span-2 relative">
-                    <label class="text-[10px] uppercase font-black text-slate-400 mb-1 block tracking-widest">Search</label>
+                    <label
+                        class="text-[10px] uppercase font-black text-slate-400 mb-1 block tracking-widest">Search</label>
                     <div class="relative">
                         <i class="fa-solid fa-search absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"></i>
-                        <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>" placeholder="ID or Brand..." class="px-3 py-2 rounded-xl outline-none transition-all border focus:border-cyan-500 w-full pl-10 bg-slate-900/40 border-slate-700 text-white placeholder:text-slate-500 focus:ring-2 focus:ring-cyan-500/50 auto-search">
+                        <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>"
+                            placeholder="<?php echo $current_tab === 'other' ? 'ID, Buyer, Item...' : 'ID or Brand...'; ?>"
+                            class="px-3 py-2 rounded-xl outline-none transition-all border focus:border-cyan-500 w-full pl-10 bg-slate-900/40 border-slate-700 text-white placeholder:text-slate-500 focus:ring-2 focus:ring-cyan-500/50 auto-search">
                     </div>
                 </div>
                 <div>
-                    <label class="text-[10px] uppercase font-black text-slate-400 mb-1 block tracking-widest">Start Date</label>
-                    <input type="date" name="start_date" value="<?php echo htmlspecialchars($start_date); ?>" class="px-3 py-2 rounded-xl outline-none transition-all border focus:border-cyan-500 w-full bg-slate-900/40 border-slate-700 text-white focus:ring-2 focus:ring-cyan-500/50">
+                    <label class="text-[10px] uppercase font-black text-slate-400 mb-1 block tracking-widest">Start
+                        Date</label>
+                    <input type="date" name="start_date" value="<?php echo htmlspecialchars($start_date); ?>"
+                        class="px-3 py-2 rounded-xl outline-none transition-all border focus:border-cyan-500 w-full bg-slate-900/40 border-slate-700 text-white focus:ring-2 focus:ring-cyan-500/50">
                 </div>
                 <div>
-                    <label class="text-[10px] uppercase font-black text-slate-400 mb-1 block tracking-widest">End Date</label>
-                    <input type="date" name="end_date" value="<?php echo htmlspecialchars($end_date); ?>" class="px-3 py-2 rounded-xl outline-none transition-all border focus:border-cyan-500 w-full bg-slate-900/40 border-slate-700 text-white focus:ring-2 focus:ring-cyan-500/50">
+                    <label class="text-[10px] uppercase font-black text-slate-400 mb-1 block tracking-widest">End
+                        Date</label>
+                    <input type="date" name="end_date" value="<?php echo htmlspecialchars($end_date); ?>"
+                        class="px-3 py-2 rounded-xl outline-none transition-all border focus:border-cyan-500 w-full bg-slate-900/40 border-slate-700 text-white focus:ring-2 focus:ring-cyan-500/50">
                 </div>
                 <div>
-                    <label class="text-[10px] uppercase font-black text-slate-400 mb-1 block tracking-widest">Payment Status</label>
-                    <select name="payment_status" class="px-3 py-2 rounded-xl outline-none transition-all border focus:border-cyan-500 w-full bg-slate-900/40 border-slate-700 text-white focus:ring-2 focus:ring-cyan-500/50">
+                    <label class="text-[10px] uppercase font-black text-slate-400 mb-1 block tracking-widest">Payment
+                        Status</label>
+                    <select name="payment_status"
+                        class="px-3 py-2 rounded-xl outline-none transition-all border focus:border-cyan-500 w-full bg-slate-900/40 border-slate-700 text-white focus:ring-2 focus:ring-cyan-500/50">
                         <option value="" class="bg-slate-800">All Status</option>
-                        <option value="pending" <?php echo $payment_status === 'pending' ? 'selected' : ''; ?> class="bg-slate-800">Pending</option>
-                        <option value="completed" <?php echo $payment_status === 'completed' ? 'selected' : ''; ?> class="bg-slate-800">Completed</option>
+                        <option value="pending" <?php echo $payment_status === 'pending' ? 'selected' : ''; ?>
+                            class="bg-slate-800">Pending</option>
+                        <option value="completed" <?php echo $payment_status === 'completed' ? 'selected' : ''; ?>
+                            class="bg-slate-800">Completed</option>
                     </select>
                 </div>
                 <div class="flex sm:col-span-2 lg:col-span-1 space-x-2" id="reset-filters-container">
-                    <?php if($search || $start_date || $end_date || $payment_status): ?>
-                        <a href="addcontainer.php" id="reset-filters-btn" class="bg-rose-500/20 text-rose-400 p-2.5 px-4 rounded-xl hover:bg-rose-500/30 transition-all flex items-center h-[42px] w-full lg:w-auto justify-center" title="Reset Filters">
+                    <?php if ($search || $start_date || $end_date || $payment_status): ?>
+                        <a href="?tab=<?php echo $current_tab; ?>" id="reset-filters-btn"
+                            class="bg-rose-500/20 text-rose-400 p-2.5 px-4 rounded-xl hover:bg-rose-500/30 transition-all flex items-center h-[42px] w-full lg:w-auto justify-center"
+                            title="Reset Filters">
                             <i class="fa-solid fa-rotate-left mr-2"></i>
                             <span class="text-xs font-bold uppercase tracking-wider">Reset</span>
                         </a>
@@ -430,97 +683,170 @@ $containers = $stmt->fetchAll();
                 </div>
             </form>
         </div>
-        <!-- Container List -->
+        <!-- List -->
         <div class="glass-card overflow-hidden">
             <div class="overflow-x-auto">
                 <table class="w-full text-left min-w-[1000px] lg:min-w-0">
                     <thead>
-                        <tr class="bg-slate-700 text-[12px] uppercase tracking-wider text-white border-b border-slate-800">
-                            <th class="px-3 py-4 font-black">Container ID</th>
-                            <th class="px-3 py-4 font-black">Brand</th>
-                            <th class="px-3 py-4 font-black">Country</th>
-                            <th class="px-3 py-4 font-black">Date</th>
-                            <th class="px-3 py-4 font-black">Total Qty</th>
-                            <th class="px-3 py-4 font-black text-amber-400">Damaged</th>
-                            <th class="px-3 py-4 font-black text-emerald-400 whitespace-nowrap">Item Per Cost</th>
-                            <th class="px-3 py-4 font-black whitespace-nowrap text-slate-100">Total Expenses</th>
-                            <th class="px-3 py-4 font-black text-emerald-400 whitespace-nowrap">Total Paid</th>
-                            <th class="px-3 py-4 font-black text-rose-400 whitespace-nowrap">Remain</th>
-                            <th class="px-3 py-4 text-center font-black">Action</th>
-                        </tr>
+                        <?php if ($current_tab === 'other'): ?>
+                            <tr class="bg-indigo-700 text-[12px] uppercase tracking-wider text-white border-b border-indigo-800">
+                                <th class="px-3 py-4 font-black">Purchase ID</th>
+                                <th class="px-3 py-4 font-black">Buyer Name</th>
+                                <th class="px-3 py-4 font-black">Item Names</th>
+                                <th class="px-3 py-4 font-black">Bill / Invoice</th>
+                                <th class="px-3 py-4 font-black">Date</th>
+                                <th class="px-3 py-4 font-black text-indigo-100">Total Qty</th>
+                                <th class="px-3 py-4 font-black text-indigo-100">Total</th>
+                                <th class="px-3 py-4 font-black text-emerald-400">Paid</th>
+                                <th class="px-3 py-4 font-black text-rose-400">Remain</th>
+                                <th class="px-3 py-4 font-black">Status</th>
+                                <th class="px-3 py-4 text-center font-black">Action</th>
+                            </tr>
+                        <?php else: ?>
+                            <tr class="bg-slate-700 text-[12px] uppercase tracking-wider text-white border-b border-slate-800">
+                                <th class="px-3 py-4 font-black">Container ID</th>
+                                <th class="px-3 py-4 font-black">Brand</th>
+                                <th class="px-3 py-4 font-black">Country</th>
+                                <th class="px-3 py-4 font-black">Date</th>
+                                <th class="px-3 py-4 font-black">Total Qty</th>
+                                <th class="px-3 py-4 font-black text-amber-400">Damaged</th>
+                                <th class="px-3 py-4 font-black text-emerald-400 whitespace-nowrap">Item Per Cost</th>
+                                <th class="px-3 py-4 font-black whitespace-nowrap text-slate-100">Total Expenses</th>
+                                <th class="px-3 py-4 font-black text-emerald-400 whitespace-nowrap">Total Paid</th>
+                                <th class="px-3 py-4 font-black text-rose-400 whitespace-nowrap">Remain</th>
+                                <th class="px-3 py-4 text-center font-black">Action</th>
+                            </tr>
+                        <?php endif; ?>
                     </thead>
                     <tbody class="divide-y divide-slate-100">
-                        <?php if (empty($containers)): ?>
-                        <tr>
-                            <td colspan="11" class="px-6 py-10 text-center text-slate-500 italic">No records found matching your criteria.</td>
-                        </tr>
+                        <?php if (empty($records)): ?>
+                            <tr>
+                                <td colspan="11" class="px-6 py-10 text-center text-slate-500 italic">No records found matching your
+                                    criteria.</td>
+                            </tr>
                         <?php endif; ?>
-                        <?php foreach ($containers as $c): 
-                            $isFullyPaid = ($c['total_paid'] >= $c['total_expenses'] && $c['total_expenses'] > 0);
-                            $rowClass = $isFullyPaid ? 'bg-green-100 hover:bg-green-200' : 'odd:bg-gray-50/40 even:bg-gray-100/40 hover:bg-cyan-500/5';
-                        ?>
-                        <tr class="<?php echo $rowClass; ?> transition-colors">
-                            <td class="px-3 py-4 text-sm font-bold text-cyan-600 whitespace-nowrap"><?php echo htmlspecialchars($c['container_number']); ?></td>
-                            <td class="px-3 py-4 text-sm font-bold text-slate-800"><?php echo htmlspecialchars($c['brand_name'] ?? '-'); ?></td>
-                            <td class="px-3 py-4 text-sm font-medium text-slate-500"><?php echo htmlspecialchars($c['country'] ?? '-'); ?></td>
-                            <td class="px-3 py-4 text-sm text-slate-600 whitespace-nowrap"><?php echo date('Y-m-d', strtotime($c['arrival_date'])); ?></td>
-                            <td class="px-3 py-4 text-sm font-semibold text-slate-700"><?php echo number_format($c['total_qty']); ?></td>
-                            <td class="px-3 py-4 text-sm font-bold text-amber-600"><?php echo number_format($c['damaged_qty']); ?></td>
-                            <td class="px-3 py-4 text-sm font-bold text-emerald-600 whitespace-nowrap">Rs. <?php echo number_format($c['per_item_cost'], 2); ?></td>
-                            <td class="px-3 py-4 text-sm font-bold text-slate-800 whitespace-nowrap">Rs. <?php echo number_format($c['total_expenses'], 2); ?></td>
-                            <td class="px-3 py-4 text-sm font-bold text-emerald-600 whitespace-nowrap">Rs. <?php echo number_format($c['total_paid'], 2); ?></td>
-                            <td class="px-3 py-4 text-sm font-bold text-rose-600 whitespace-nowrap">Rs. <?php echo number_format($c['total_expenses'] - $c['total_paid'], 2); ?></td>
-                            <td class="px-3 py-4 text-center">
-                                <div class="flex items-center justify-center gap-2">
-                                    <button onclick="editContainer('<?php echo $c['container_number']; ?>')" class="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-lg shadow-emerald-600/10">
-                                        Update
-                                    </button>
-                                    <button onclick="deleteContainer(<?php echo $c['id']; ?>, '<?php echo $c['container_number']; ?>')" class="bg-rose-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-lg shadow-rose-600/10">
-                                        Delete
-                                    </button>
-                                </div>
-                            </td>
-                        </tr>
-                        <?php endforeach; ?>
+                        <?php foreach ($records as $r):
+                            if ($current_tab === 'other'):
+                                $isFullyPaid = ((float) $r['total_paid'] >= (float) $r['grand_total'] && (float) $r['grand_total'] > 0);
+                                $rowClass = $isFullyPaid ? 'bg-indigo-50/30 font-bold' : 'bg-white hover:bg-slate-50';
+                                ?>
+                                <tr class="<?php echo $rowClass; ?> transition-colors border-b border-slate-100">
+                                    <td class="px-3 py-4 text-sm font-bold text-indigo-600"><?php echo htmlspecialchars($r['purchase_number']); ?></td>
+                                    <td class="px-3 py-4 text-sm font-bold text-slate-800"><?php echo htmlspecialchars($r['buyer_name']); ?></td>
+                                    <td class="px-3 py-4 text-sm font-medium text-slate-600 truncate max-w-[150px]" title="<?php echo htmlspecialchars($r['item_names'] ?: '-'); ?>"><?php echo htmlspecialchars($r['item_names'] ?: '-'); ?></td>
+                                    <td class="px-3 py-4 text-sm text-slate-500 italic"><?php echo htmlspecialchars($r['bill_number'] ?: '-'); ?></td>
+                                    <td class="px-3 py-4 text-sm text-slate-500"><?php echo date('Y-m-d', strtotime($r['purchase_date'])); ?></td>
+                                    <td class="px-3 py-4 text-sm font-semibold text-slate-700"><?php echo number_format($r['total_qty']); ?></td>
+                                    <td class="px-3 py-4 text-sm font-bold text-slate-800">Rs. <?php echo number_format($r['grand_total'], 2); ?></td>
+                                    <td class="px-3 py-4 text-sm font-bold text-emerald-600">Rs. <?php echo number_format($r['total_paid'], 2); ?></td>
+                                    <td class="px-3 py-4 text-sm font-bold text-rose-600">Rs. <?php echo number_format($r['grand_total'] - $r['total_paid'], 2); ?></td>
+                                    <td class="px-3 py-4">
+                                        <button onclick="openOtherPurchaseHistory(<?php echo $r['id']; ?>, '<?php echo addslashes($r['buyer_name']); ?>', <?php echo $r['grand_total'] - $r['total_paid']; ?>)"
+                                            class="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest transition-all <?php echo $isFullyPaid ? 'bg-blue-600 text-white' : ($r['total_paid'] > 0 ? 'bg-amber-400 text-slate-900' : 'bg-yellow-400 text-slate-900'); ?>">
+                                            <?php echo $isFullyPaid ? 'PAID' : ($r['total_paid'] > 0 ? 'PARTIAL' : 'PENDING'); ?>
+                                        </button>
+                                    </td>
+                                    <td class="px-3 py-4 text-center">
+                                        <div class="flex items-center justify-center gap-2">
+                                            <button onclick="editPurchase(<?php echo $r['id']; ?>)"
+                                                class="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all">
+                                                Update
+                                            </button>
+                                            <button onclick="deletePurchase(<?php echo $r['id']; ?>, '<?php echo $r['purchase_number']; ?>')"
+                                                class="bg-rose-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all">
+                                                Delete
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            <?php else:
+                                $isFullyPaid = ($r['total_paid'] >= $r['total_expenses'] && $r['total_expenses'] > 0);
+                                $rowClass = $isFullyPaid ? 'bg-green-100/40 hover:bg-green-100 font-bold' : 'odd:bg-gray-50/40 even:bg-gray-100/40 hover:bg-cyan-500/5';
+                                ?>
+                                <tr class="<?php echo $rowClass; ?> transition-colors">
+                                    <td class="px-3 py-4 text-sm font-bold text-cyan-600 whitespace-nowrap">
+                                        <?php echo htmlspecialchars($r['container_number']); ?></td>
+                                    <td class="px-3 py-4 text-sm font-bold text-slate-800">
+                                        <?php echo htmlspecialchars($r['brand_name'] ?? '-'); ?></td>
+                                    <td class="px-3 py-4 text-sm font-medium text-slate-500">
+                                        <?php echo htmlspecialchars($r['country'] ?? '-'); ?></td>
+                                    <td class="px-3 py-4 text-sm text-slate-600 whitespace-nowrap">
+                                        <?php echo date('Y-m-d', strtotime($r['arrival_date'])); ?></td>
+                                    <td class="px-3 py-4 text-sm font-semibold text-slate-700">
+                                        <?php echo number_format($r['total_qty']); ?></td>
+                                    <td class="px-3 py-4 text-sm font-bold text-amber-600"><?php echo number_format($r['damaged_qty']); ?>
+                                    </td>
+                                    <td class="px-3 py-4 text-sm font-bold text-emerald-600 whitespace-nowrap">Rs.
+                                        <?php echo number_format($r['per_item_cost'], 2); ?></td>
+                                    <td class="px-3 py-4 text-sm font-bold text-slate-800 whitespace-nowrap">Rs.
+                                        <?php echo number_format($r['total_expenses'], 2); ?></td>
+                                    <td class="px-3 py-4 text-sm font-bold text-emerald-600 whitespace-nowrap">Rs.
+                                        <?php echo number_format($r['total_paid'], 2); ?></td>
+                                    <td class="px-3 py-4 text-sm font-bold text-rose-600 whitespace-nowrap">Rs.
+                                        <?php echo number_format($r['total_expenses'] - $r['total_paid'], 2); ?></td>
+                                    <td class="px-3 py-4 text-center">
+                                        <div class="flex items-center justify-center gap-2">
+                                            <button onclick="editContainer('<?php echo $r['container_number']; ?>')"
+                                                class="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-lg shadow-emerald-600/10">
+                                                Update
+                                            </button>
+                                            <button onclick="deleteContainer(<?php echo $r['id']; ?>, '<?php echo $r['container_number']; ?>')"
+                                                class="bg-rose-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-lg shadow-rose-600/10">
+                                                Delete
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            <?php endif; endforeach; ?>
                     </tbody>
                 </table>
             </div>
 
             <!-- Pagination Support -->
             <?php if ($total_pages > 1): ?>
-            <div id="pagination-container" class="px-4 sm:px-6 py-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
-                <div class="text-[10px] sm:text-xs text-slate-500 uppercase font-bold tracking-wider">
-                    Showing <span class="text-slate-800"><?php echo $offset + 1; ?></span> to <span class="text-slate-800"><?php echo min($offset + $limit, $total_records); ?></span> of <span class="text-slate-800"><?php echo $total_records; ?></span> entries
-                </div>
-                <div class="flex items-center space-x-1 sm:space-x-2">
-                    <?php if ($page > 1): ?>
-                        <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page - 1])); ?>" class="p-2 sm:px-4 sm:py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-bold transition-all"><i class="fa-solid fa-chevron-left"></i></a>
-                    <?php endif; ?>
-                    
-                    <div class="flex items-center space-x-1">
-                        <?php 
-                        $start = max(1, $page - 2);
-                        $end = min($total_pages, $page + 2);
-                        for ($i = $start; $i <= $end; $i++): 
-                        ?>
-                            <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $i])); ?>" class="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg text-xs font-bold transition-all <?php echo $page == $i ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-900/20' : 'bg-white hover:bg-slate-50 border border-slate-200 text-slate-500'; ?>">
-                                <?php echo $i; ?>
-                            </a>
-                        <?php endfor; ?>
+                <div id="pagination-container"
+                    class="px-4 sm:px-6 py-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <div class="text-[10px] sm:text-xs text-slate-500 uppercase font-bold tracking-wider">
+                        Showing <span class="text-slate-800"><?php echo $offset + 1; ?></span> to <span
+                            class="text-slate-800"><?php echo min($offset + $limit, $total_records); ?></span> of <span
+                            class="text-slate-800"><?php echo $total_records; ?></span> entries
                     </div>
+                    <div class="flex items-center space-x-1 sm:space-x-2">
+                        <?php if ($page > 1): ?>
+                            <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page - 1])); ?>"
+                                class="p-2 sm:px-4 sm:py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-bold transition-all"><i
+                                    class="fa-solid fa-chevron-left"></i></a>
+                        <?php endif; ?>
 
-                    <?php if ($page < $total_pages): ?>
-                        <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page + 1])); ?>" class="p-2 sm:px-4 sm:py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-bold transition-all"><i class="fa-solid fa-chevron-right"></i></a>
-                    <?php endif; ?>
+                        <div class="flex items-center space-x-1">
+                            <?php
+                            $start = max(1, $page - 2);
+                            $end = min($total_pages, $page + 2);
+                            for ($i = $start; $i <= $end; $i++):
+                                ?>
+                                <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $i])); ?>"
+                                    class="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg text-xs font-bold transition-all <?php echo $page == $i ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-900/20' : 'bg-white hover:bg-slate-50 border border-slate-200 text-slate-500'; ?>">
+                                    <?php echo $i; ?>
+                                </a>
+                            <?php endfor; ?>
+                        </div>
+
+                        <?php if ($page < $total_pages): ?>
+                            <a href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page + 1])); ?>"
+                                class="p-2 sm:px-4 sm:py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-bold transition-all"><i
+                                    class="fa-solid fa-chevron-right"></i></a>
+                        <?php endif; ?>
+                    </div>
                 </div>
-            </div>
             <?php endif; ?>
         </div>
     </main>
 
     <!-- Modal Backdrop -->
-    <div id="modal-container" class="fixed inset-0 bg-black/40 backdrop-blur-[3px] z-50 flex items-center justify-center p-2 sm:p-4 hidden">
-        <div class="container-modal w-full max-w-4xl max-h-[95vh] overflow-y-auto rounded-[20px] sm:rounded-[30px] shadow-2xl">
+    <div id="modal-container"
+        class="fixed inset-0 bg-black/40 backdrop-blur-[3px] z-50 flex items-center justify-center p-2 sm:p-4 hidden">
+        <div
+            class="container-modal w-full max-w-4xl max-h-[95vh] overflow-y-auto rounded-[20px] sm:rounded-[30px] shadow-2xl">
             <div class="p-4 sm:p-8">
                 <div class="flex items-center justify-between mb-6 sm:mb-8">
                     <div>
@@ -533,34 +859,48 @@ $containers = $stmt->fetchAll();
 
                 <form id="container-form" onsubmit="saveContainer(event)" class="space-y-8">
                     <input type="hidden" name="action" value="save_container">
-                    
+
                     <!-- Basic Info -->
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div class="flex flex-col space-y-2">
-                            <label class="text-xs uppercase font-bold text-slate-500 tracking-wider">Container Number</label>
-                            <input type="text" name="container_number" id="container_number" class="input-glass" required placeholder="0001" readonly>
+                            <label class="text-xs uppercase font-bold text-slate-500 tracking-wider">Container
+                                Number</label>
+                            <input type="text" name="container_number" id="container_number" class="input-glass"
+                                required placeholder="0001" readonly>
                         </div>
                         <div class="flex flex-col space-y-2">
-                            <label class="text-xs uppercase font-bold text-slate-500 tracking-wider">Arrival Date</label>
-                            <input type="date" name="arrival_date" id="arrival_date" class="input-glass" required value="<?php echo date('Y-m-d'); ?>">
+                            <label class="text-xs uppercase font-bold text-slate-500 tracking-wider">Arrival
+                                Date</label>
+                            <input type="date" name="arrival_date" id="arrival_date" class="input-glass" required
+                                value="<?php echo date('Y-m-d'); ?>">
                         </div>
                         <div class="flex flex-col space-y-2">
-                            <label class="text-xs uppercase font-bold text-slate-500 tracking-wider">Country (Optional)</label>
-                            <input type="text" name="country" id="country" class="input-glass" placeholder="e.g. China, Dubai">
+                            <label class="text-xs uppercase font-bold text-slate-500 tracking-wider">Country
+                                (Optional)</label>
+                            <input type="text" name="country" id="country" class="input-glass"
+                                placeholder="e.g. China, Dubai">
                         </div>
                     </div>
 
                     <!-- Items Section -->
                     <div class="space-y-4">
                         <div class="flex items-center justify-between">
-                            <label class="text-xs uppercase font-bold text-slate-500 tracking-wider">Container Items</label>
-                            <button id="btn-add-item" type="button" onclick="addItemRow()" class="text-cyan-600 hover:text-cyan-500 text-xs font-bold uppercase tracking-widest">+ Add Item</button>
+                            <label class="text-xs uppercase font-bold text-slate-500 tracking-wider">Container
+                                Items</label>
+                            <button id="btn-add-item" type="button" onclick="addItemRow()"
+                                class="text-cyan-600 hover:text-cyan-500 text-xs font-bold uppercase tracking-widest">+
+                                Add Item</button>
                         </div>
-                        <div id="items-list-header" class="hidden lg:grid grid-cols-5 gap-3 px-4 py-2 mb-2 bg-slate-100 rounded-lg border border-slate-200">
-                            <span class="text-[10px] uppercase font-bold text-slate-600 tracking-widest col-span-2">Brand Name</span>
+                        <div id="items-list-header"
+                            class="hidden lg:grid grid-cols-5 gap-3 px-4 py-2 mb-2 bg-slate-100 rounded-lg border border-slate-200">
+                            <span
+                                class="text-[10px] uppercase font-bold text-slate-600 tracking-widest col-span-2">Brand
+                                Name</span>
                             <span class="text-[10px] uppercase font-bold text-slate-600 tracking-widest">Pallets</span>
-                            <span class="text-[10px] uppercase font-bold text-slate-600 tracking-widest">Qty / Pallet</span>
-                            <span class="text-[10px] uppercase font-bold text-slate-600 tracking-widest text-center">Total</span>
+                            <span class="text-[10px] uppercase font-bold text-slate-600 tracking-widest">Qty /
+                                Pallet</span>
+                            <span
+                                class="text-[10px] uppercase font-bold text-slate-600 tracking-widest text-center">Total</span>
                         </div>
                         <div id="items-list" class="space-y-3">
                             <!-- Dynamic Item Rows -->
@@ -570,23 +910,29 @@ $containers = $stmt->fetchAll();
                     <!-- Expenses Section -->
                     <div class="space-y-6">
                         <div class="flex flex-col space-y-2">
-                            <label class="text-xs uppercase font-bold text-cyan-600 tracking-wider">Base Container Cost</label>
-                            <input type="number" step="0.01" name="container_cost" id="container_cost" class="input-glass border-cyan-500/20" oninput="calculateTotals()" placeholder="0.00">
+                            <label class="text-xs uppercase font-bold text-cyan-600 tracking-wider">Base Container
+                                Cost</label>
+                            <input type="number" step="0.01" name="container_cost" id="container_cost"
+                                class="input-glass border-cyan-500/20" oninput="calculateTotals()" placeholder="0.00">
                         </div>
 
                         <div class="space-y-4">
                             <div class="flex items-center justify-between">
-                                <label class="text-xs uppercase font-bold text-slate-500 tracking-wider">Other Expenses</label>
+                                <label class="text-xs uppercase font-bold text-slate-500 tracking-wider">Other
+                                    Expenses</label>
                                 <div class="flex space-x-2">
-                                    <button type="button" onclick="addFreqExpense('Transport')" class="btn-freq">+ Transport</button>
-                                    <button type="button" onclick="addFreqExpense('Duty Charge')" class="btn-freq">+ Duty Charge</button>
+                                    <button type="button" onclick="addFreqExpense('Transport')" class="btn-freq">+
+                                        Transport</button>
+                                    <button type="button" onclick="addFreqExpense('Duty Charge')" class="btn-freq">+
+                                        Duty Charge</button>
                                 </div>
                             </div>
                             <div id="expenses-list" class="space-y-3">
                                 <!-- Dynamic Expense Rows -->
                             </div>
                             <div id="add-exp-container" class="pt-2">
-                                <button type="button" onclick="addExpenseRow()" class="w-full py-4 border-2 border-dashed  rounded-2xl  text-cyan-400 border-cyan-400/50 bg-cyan-400/5 hover:text-cyan-600 hover:border-cyan-600/50 hover:bg-cyan-600/5 transition-all flex items-center justify-center space-x-2 font-bold uppercase text-xs">
+                                <button type="button" onclick="addExpenseRow()"
+                                    class="w-full py-4 border-2 border-dashed  rounded-2xl  text-cyan-400 border-cyan-400/50 bg-cyan-400/5 hover:text-cyan-600 hover:border-cyan-600/50 hover:bg-cyan-600/5 transition-all flex items-center justify-center space-x-2 font-bold uppercase text-xs">
                                     <i class="fa-solid fa-plus-circle"></i>
                                     <span>Add Extra Expense</span>
                                 </button>
@@ -597,14 +943,17 @@ $containers = $stmt->fetchAll();
                     <!-- Payments Section -->
                     <div class="space-y-4">
                         <div class="flex items-center justify-between">
-                            <label class="text-xs uppercase font-bold text-slate-500 tracking-wider">Payments History</label>
-                            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total to Pay: <span id="pay-header-total" class="text-slate-800">Rs. 0.00</span></p>
+                            <label class="text-xs uppercase font-bold text-slate-500 tracking-wider">Payments
+                                History</label>
+                            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total to Pay:
+                                <span id="pay-header-total" class="text-slate-800">Rs. 0.00</span></p>
                         </div>
                         <div id="payments-list" class="space-y-3">
                             <!-- Dynamic Payment Rows -->
                         </div>
                         <div id="add-pay-container" class="pt-2">
-                            <button type="button" onclick="addPaymentRow()" class="w-full py-4 border-2 border-dashed  rounded-2xl text-emerald-400 border-emerald-400/50 bg-emerald-400/5 hover:text-emerald-600 hover:border-emerald-600/50 hover:bg-emerald-600/5 transition-all flex items-center justify-center space-x-2 font-bold uppercase text-xs">
+                            <button type="button" onclick="addPaymentRow()"
+                                class="w-full py-4 border-2 border-dashed  rounded-2xl text-emerald-400 border-emerald-400/50 bg-emerald-400/5 hover:text-emerald-600 hover:border-emerald-600/50 hover:bg-emerald-600/5 transition-all flex items-center justify-center space-x-2 font-bold uppercase text-xs">
                                 <i class="fa-solid fa-plus-circle"></i>
                                 <span>Add New Payment</span>
                             </button>
@@ -615,9 +964,12 @@ $containers = $stmt->fetchAll();
                     <div class="pt-6 border-t border-slate-200 grid grid-cols-1 lg:grid-cols-5 gap-4 items-center">
                         <div class="flex flex-col space-y-2">
                             <label class="text-xs uppercase font-bold text-amber-600 tracking-wider">Damaged Qty</label>
-                            <input type="number" name="damaged_qty" id="damaged_qty" class="input-glass border-amber-500/20 w-full" oninput="calculateTotals()" placeholder="0">
+                            <input type="number" name="damaged_qty" id="damaged_qty"
+                                class="input-glass border-amber-500/20 w-full" oninput="calculateTotals()"
+                                placeholder="0">
                         </div>
-                        <div class="lg:col-span-4 glass-card bg-white/60 p-4 flex flex-col sm:flex-row justify-around items-center gap-4">
+                        <div
+                            class="lg:col-span-4 glass-card bg-white/60 p-4 flex flex-col sm:flex-row justify-around items-center gap-4">
                             <div class="text-center border-r border-slate-200 px-4 flex-1">
                                 <p class="text-[9px] uppercase font-bold text-slate-500 mb-1">Expenses</p>
                                 <p id="disp-total-expenses" class="text-base font-bold text-slate-800">Rs. 0</p>
@@ -631,7 +983,8 @@ $containers = $stmt->fetchAll();
                                 <p id="disp-total-paid" class="text-base font-bold text-emerald-600">Rs. 0</p>
                             </div>
                             <div class="text-center border-r border-slate-200 px-4 flex-1">
-                                <p id="label-balance-due" class="text-[9px] uppercase font-bold text-rose-600 mb-1">Balance Due</p>
+                                <p id="label-balance-due" class="text-[9px] uppercase font-bold text-rose-600 mb-1">
+                                    Balance Due</p>
                                 <p id="disp-balance-due" class="text-base font-bold text-rose-600">Rs. 0</p>
                             </div>
                             <div class="text-center px-4 flex-1">
@@ -642,10 +995,132 @@ $containers = $stmt->fetchAll();
                     </div>
 
                     <div class="flex flex-col sm:flex-row justify-end pt-1 gap-3">
-                        <button type="button" onclick="closeModal()" class="sm:hidden order-2 bg-slate-100 text-slate-600 font-bold py-3 px-6 rounded-2xl border border-slate-200">Cancel</button>
-                        <button type="button" onclick="closeModal()" class="order-1 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white font-bold py-3 px-8 sm:px-12 rounded-2xl shadow-xl shadow-cyan-900/10 transition-all active:scale-95 text-sm sm:text-base">
+                        <button type="button" onclick="closeModal()"
+                            class="sm:hidden order-2 bg-slate-100 text-slate-600 font-bold py-3 px-6 rounded-2xl border border-slate-200">Cancel</button>
+                        <button type="button" onclick="closeModal()"
+                            class="order-1 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 text-white font-bold py-3 px-8 sm:px-12 rounded-2xl shadow-xl shadow-cyan-900/10 transition-all active:scale-95 text-sm sm:text-base">
                             Done
                         </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Other Purchase Modal Backdrop -->
+    <div id="purchase-modal-container"
+        class="fixed inset-0 bg-black/40 backdrop-blur-[3px] z-50 flex items-center justify-center p-2 sm:p-4 hidden">
+        <div
+            class="container-modal w-full max-w-4xl max-h-[95vh] overflow-y-auto rounded-[20px] sm:rounded-[30px] shadow-2xl">
+            <div class="p-4 sm:p-8">
+                <div class="flex items-center justify-between mb-6 sm:mb-8 text-slate-800">
+                    <div>
+                        <h2 id="p-modal-title" class="text-xl sm:text-2xl font-bold">Add New Purchase</h2>
+                    </div>
+                    <button onclick="closePurchaseModal()" class="text-slate-400 hover:text-slate-600">
+                        <i class="fa-solid fa-times text-2xl"></i>
+                    </button>
+                </div>
+
+                <form id="purchase-form" onsubmit="savePurchase(event)" class="space-y-6">
+                    <input type="hidden" name="action" value="save_purchase">
+                    <input type="hidden" id="p_id" name="id">
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div class="flex flex-col space-y-2">
+                            <label class="text-xs uppercase font-bold text-slate-500 tracking-wider">Purchase
+                                Number</label>
+                            <input type="text" name="purchase_number" id="p_purchase_number" class="input-glass"
+                                readonly required>
+                        </div>
+                        <div class="flex flex-col space-y-2">
+                            <label class="text-xs uppercase font-bold text-slate-500 tracking-wider">Date</label>
+                            <input type="date" name="purchase_date" id="p_purchase_date" class="input-glass" required
+                                value="<?php echo date('Y-m-d'); ?>">
+                        </div>
+                        <div class="flex flex-col space-y-2">
+                            <label class="text-xs uppercase font-bold text-slate-500 tracking-wider">Bill/Invoice
+                                (Optional)</label>
+                            <input type="text" name="bill_number" id="p_bill_number" class="input-glass"
+                                placeholder="Inv-001">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-1 gap-6">
+                        <div class="flex flex-col space-y-2 relative">
+                            <label class="text-xs uppercase font-bold text-slate-500 tracking-wider">Buyer Name</label>
+                            <input type="text" name="buyer_name" id="p_buyer_name" class="input-glass" required
+                                placeholder="Search or Type Buyer..." oninput="suggestBuyers(this)" autocomplete="off">
+                            <div id="buyer-suggestions"
+                                class="absolute left-0 top-full mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-xl hidden z-[100] max-h-40 overflow-y-auto">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Purchase Items Section -->
+                    <div class="space-y-4">
+                        <div class="flex items-center justify-between">
+                            <label class="text-xs uppercase font-bold text-slate-500 tracking-wider">Purchase Items</label>
+                            <button type="button" onclick="addPurchaseItemRow()"
+                                class="text-indigo-600 hover:text-indigo-500 text-xs font-bold uppercase tracking-widest">+
+                                Add Item</button>
+                        </div>
+                        <div id="p-items-list" class="space-y-3"></div>
+                    </div>
+
+                    <!-- Expenses for Purchase -->
+                    <div class="space-y-4">
+                        <div class="flex items-center justify-between">
+                            <label class="text-xs uppercase font-bold text-slate-500 tracking-wider">Purchase
+                                Expenses</label>
+                            <button type="button" onclick="addPurchaseExpenseRow()"
+                                class="text-cyan-600 hover:text-cyan-500 text-xs font-bold uppercase tracking-widest">+
+                                Add Expense</button>
+                        </div>
+                        <div id="p-expenses-list" class="space-y-3"></div>
+                    </div>
+
+                    <!-- Payments for Purchase -->
+                    <div class="space-y-4">
+                        <div class="flex items-center justify-between">
+                            <label class="text-xs uppercase font-bold text-slate-500 tracking-wider">Payments
+                                History</label>
+                            <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Paid: <span
+                                    id="p-total-paid-disp" class="text-emerald-600">Rs. 0.00</span> | Bal: <span
+                                    id="p-bal-due-disp" class="text-rose-600">Rs. 0.00</span></p>
+                        </div>
+                        <div id="p-payments-list" class="space-y-3"></div>
+                        <button type="button" onclick="addPurchasePaymentRow()"
+                            class="w-full py-3 border-2 border-dashed border-emerald-300 bg-emerald-50/30 text-emerald-600 rounded-xl font-bold uppercase text-xs hover:bg-emerald-50 transition-all">+
+                            Add New Payment</button>
+                    </div>
+
+                    <div class="flex flex-col md:flex-row justify-between items-end gap-4 pt-6 border-t border-slate-100 mt-4">
+                        <div class="flex flex-wrap gap-4 md:gap-6 items-end w-full md:w-auto">
+                            <div class="flex flex-col space-y-1">
+                                <label class="text-[10px] uppercase font-bold text-slate-500">Invoice Discount</label>
+                                <input type="number" step="0.01" name="discount" id="p_discount" class="input-glass text-right w-24 h-[42px]" oninput="calculatePurchaseTotals()" value="0">
+                            </div>
+                            <div class="flex flex-col space-y-1">
+                                <span class="text-[10px] uppercase font-bold text-slate-500">Purchases Total</span>
+                                <span id="p_disp_sub_total" class="font-bold text-slate-700 h-[42px] flex items-center">Rs. 0.00</span>
+                            </div>
+                            <div class="flex flex-col space-y-1">
+                                <span class="text-[10px] uppercase font-bold text-amber-600">Total Expenses</span>
+                                <span id="p_disp_total_expenses" class="font-bold text-amber-600 h-[42px] flex items-center">Rs. 0.00</span>
+                            </div>
+                            <div class="flex flex-col space-y-1">
+                                <span class="text-[10px] uppercase font-bold text-indigo-600">Grand Total</span>
+                                <span id="p_disp_grand_total" class="font-black text-indigo-600 text-xl h-[42px] flex items-center">Rs. 0.00</span>
+                            </div>
+                        </div>
+                        <div class="flex gap-3 h-[42px] w-full md:w-auto justify-end">
+                            <button type="button" onclick="closePurchaseModal()"
+                                class="px-6 py-3 bg-slate-100 text-slate-500 rounded-2xl font-bold hover:bg-slate-200 transition-colors">Cancel</button>
+                            <button type="submit"
+                                class="px-8 py-3 bg-indigo-600 text-white rounded-2xl font-bold shadow-xl shadow-indigo-900/10 hover:bg-indigo-700 transition-all flex items-center whitespace-nowrap">Save
+                                Purchase</button>
+                        </div>
                     </div>
                 </form>
             </div>
@@ -658,7 +1133,7 @@ $containers = $stmt->fetchAll();
         const expensesList = document.getElementById('expenses-list');
         const addExpBtn = document.getElementById('add-exp-container');
         let currentMode = 'add';
-        
+
         function openModal(mode = 'add') {
             currentMode = mode;
             document.getElementById('modal-title').innerText = mode === 'add' ? "Add New Container" : (mode === 'edit' ? "Edit Container" : "View Container");
@@ -666,17 +1141,17 @@ $containers = $stmt->fetchAll();
             itemsList.innerHTML = '';
             expensesList.innerHTML = '';
             document.getElementById('payments-list').innerHTML = ''; // Clear payments too
-            
+
             const submitBtn = document.querySelector('#container-form button[type="submit"]');
             const addButtons = document.querySelectorAll('.btn-freq, #add-exp-container, #btn-add-item, #add-pay-container');
-            
+
             if (mode === 'view') {
                 document.querySelectorAll('#container-form input, #container-form select, #container-form textarea').forEach(input => input.disabled = true);
                 addButtons.forEach(btn => btn.classList.add('hidden'));
             } else {
                 document.querySelectorAll('#container-form input, #container-form select, #container-form textarea').forEach(input => input.disabled = false);
                 addButtons.forEach(btn => btn.classList.remove('hidden'));
-                
+
                 if (mode === 'add') {
                     fetch('?action=get_next_number')
                         .then(r => r.json())
@@ -756,14 +1231,14 @@ $containers = $stmt->fetchAll();
             const rowId = 'pay_' + Date.now() + Math.random();
             const autoId = 'TX-' + Math.floor(100000 + Math.random() * 900000); // e.g. TX-859123
             const displayId = data ? data.payment_id : autoId;
-            
+
             // Suggest balance as default if adding new
             let totalExpenses = parseFloat(document.getElementById('container_cost').value || 0);
             document.querySelectorAll('.exp-amount').forEach(el => totalExpenses += parseFloat(el.value || 0));
 
             let totalPaid = 0;
             document.querySelectorAll('.pay-amount').forEach(el => totalPaid += parseFloat(el.value || 0));
-            
+
             const suggestion = Math.max(0, totalExpenses - totalPaid);
             const defaultAmt = data ? data.amount : (suggestion > 0 ? suggestion.toFixed(2) : '');
 
@@ -854,7 +1329,7 @@ $containers = $stmt->fetchAll();
 
             let totalPaid = 0;
             document.querySelectorAll('.pay-amount').forEach(el => totalPaid += parseFloat(el.value || 0));
-            
+
             // Prevention of overpayment (Robust)
             if (totalPaid > totalExpenses) {
                 const activeEl = document.activeElement;
@@ -896,16 +1371,16 @@ $containers = $stmt->fetchAll();
             const perItemCost = (netQty > 0) ? (totalExpenses / netQty) : 0;
             const balanceDue = Math.max(0, totalExpenses - totalPaid);
 
-            document.getElementById('disp-total-expenses').innerText = "Rs. " + totalExpenses.toLocaleString('en-US', {minimumFractionDigits: 2});
-            document.getElementById('pay-header-total').innerText = "Rs. " + totalExpenses.toLocaleString('en-US', {minimumFractionDigits: 2});
+            document.getElementById('disp-total-expenses').innerText = "Rs. " + totalExpenses.toLocaleString('en-US', { minimumFractionDigits: 2 });
+            document.getElementById('pay-header-total').innerText = "Rs. " + totalExpenses.toLocaleString('en-US', { minimumFractionDigits: 2 });
             document.getElementById('disp-grand-total-qty').innerText = netQty.toLocaleString();
-            document.getElementById('disp-per-item-cost').innerText = "Rs. " + perItemCost.toLocaleString('en-US', {minimumFractionDigits: 2});
-            
+            document.getElementById('disp-per-item-cost').innerText = "Rs. " + perItemCost.toLocaleString('en-US', { minimumFractionDigits: 2 });
+
             const dispPaid = document.getElementById('disp-total-paid');
             const dispBalance = document.getElementById('disp-balance-due');
-            if (dispPaid) dispPaid.innerText = "Rs. " + totalPaid.toLocaleString('en-US', {minimumFractionDigits: 2});
+            if (dispPaid) dispPaid.innerText = "Rs. " + totalPaid.toLocaleString('en-US', { minimumFractionDigits: 2 });
             if (dispBalance) {
-                dispBalance.innerText = "Rs. " + balanceDue.toLocaleString('en-US', {minimumFractionDigits: 2});
+                dispBalance.innerText = "Rs. " + balanceDue.toLocaleString('en-US', { minimumFractionDigits: 2 });
                 dispBalance.classList.toggle('text-rose-400', balanceDue > 0);
                 dispBalance.classList.toggle('text-emerald-400', balanceDue === 0);
                 document.getElementById('label-balance-due').innerText = "Balance Due";
@@ -914,27 +1389,27 @@ $containers = $stmt->fetchAll();
 
         function refreshTable() {
             fetch(window.location.href)
-            .then(r => r.text())
-            .then(html => {
-                const parser = new DOMParser();
-                const doc = parser.parseFromString(html, 'text/html');
-                const newTbody = doc.querySelector('tbody');
-                if (newTbody) {
-                    document.querySelector('tbody').innerHTML = newTbody.innerHTML;
-                }
-            });
+                .then(r => r.text())
+                .then(html => {
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    const newTbody = doc.querySelector('tbody');
+                    if (newTbody) {
+                        document.querySelector('tbody').innerHTML = newTbody.innerHTML;
+                    }
+                });
         }
 
         let autoSaveTimer;
-        document.getElementById('container-form').addEventListener('input', function() {
+        document.getElementById('container-form').addEventListener('input', function () {
             if (currentMode === 'view') return;
             clearTimeout(autoSaveTimer);
             autoSaveTimer = setTimeout(() => {
                 saveContainer(null, true);
             }, 800);
         });
-        
-        document.getElementById('container-form').addEventListener('change', function() {
+
+        document.getElementById('container-form').addEventListener('change', function () {
             if (currentMode === 'view') return;
             clearTimeout(autoSaveTimer);
             autoSaveTimer = setTimeout(() => {
@@ -1043,10 +1518,10 @@ $containers = $stmt->fetchAll();
             document.getElementById('country').value = data.country || '';
             document.getElementById('damaged_qty').value = data.damaged_qty;
             document.getElementById('container_cost').value = data.container_cost;
-            
+
             itemsList.innerHTML = '';
             data.items.forEach(item => addItemRow(item));
-            
+
             expensesList.innerHTML = '';
             data.expenses.forEach(exp => addExpenseRow(exp.expense_name, exp.amount));
 
@@ -1055,7 +1530,7 @@ $containers = $stmt->fetchAll();
                 paymentsList.innerHTML = '';
                 if (data.payments) data.payments.forEach(pay => addPaymentRow(pay));
             }
-            
+
             calculateTotals();
         }
 
@@ -1064,7 +1539,7 @@ $containers = $stmt->fetchAll();
                 const formData = new FormData();
                 formData.append('action', 'delete_container');
                 formData.append('container_id', id);
-                
+
                 fetch('', { method: 'POST', body: formData })
                     .then(r => r.json())
                     .then(data => {
@@ -1080,58 +1555,58 @@ $containers = $stmt->fetchAll();
         // Auto-search AJAX implementation
         let mainSearchTimeout;
         const filterForm = document.getElementById('filter-form');
-        
+
         function handleAjaxSearch(providedUrl = null) {
             clearTimeout(mainSearchTimeout);
             mainSearchTimeout = setTimeout(() => {
                 const url = providedUrl || ('?' + new URLSearchParams(new FormData(filterForm)).toString());
-                
+
                 // Keep URL updated for copy-pasting/refreshing
                 window.history.replaceState({}, '', url);
-                
+
                 fetch(url)
-                .then(r => r.text())
-                .then(html => {
-                    const parser = new DOMParser();
-                    const doc = parser.parseFromString(html, 'text/html');
-                    
-                    // Update main table
-                    const newTbody = doc.querySelector('tbody');
-                    if (newTbody) {
-                        document.querySelector('tbody').innerHTML = newTbody.innerHTML;
-                    }
-                    
-                    // Update Pagination
-                    const oldPagination = document.getElementById('pagination-container');
-                    const newPagination = doc.getElementById('pagination-container');
-                    if (oldPagination && newPagination) {
-                        oldPagination.outerHTML = newPagination.outerHTML;
-                    } else if (!oldPagination && newPagination) {
-                        document.querySelector('.overflow-x-auto').insertAdjacentHTML('afterend', newPagination.outerHTML);
-                    } else if (oldPagination && !newPagination) {
-                        oldPagination.remove();
-                    }
-                    
-                    // Update Reset button container
-                    const oldResetBtn = document.getElementById('reset-filters-container');
-                    const newResetBtn = doc.getElementById('reset-filters-container');
-                    if (oldResetBtn && newResetBtn) {
-                        oldResetBtn.innerHTML = newResetBtn.innerHTML;
-                    }
-                });
+                    .then(r => r.text())
+                    .then(html => {
+                        const parser = new DOMParser();
+                        const doc = parser.parseFromString(html, 'text/html');
+
+                        // Update main table
+                        const newTbody = doc.querySelector('tbody');
+                        if (newTbody) {
+                            document.querySelector('tbody').innerHTML = newTbody.innerHTML;
+                        }
+
+                        // Update Pagination
+                        const oldPagination = document.getElementById('pagination-container');
+                        const newPagination = doc.getElementById('pagination-container');
+                        if (oldPagination && newPagination) {
+                            oldPagination.outerHTML = newPagination.outerHTML;
+                        } else if (!oldPagination && newPagination) {
+                            document.querySelector('.overflow-x-auto').insertAdjacentHTML('afterend', newPagination.outerHTML);
+                        } else if (oldPagination && !newPagination) {
+                            oldPagination.remove();
+                        }
+
+                        // Update Reset button container
+                        const oldResetBtn = document.getElementById('reset-filters-container');
+                        const newResetBtn = doc.getElementById('reset-filters-container');
+                        if (oldResetBtn && newResetBtn) {
+                            oldResetBtn.innerHTML = newResetBtn.innerHTML;
+                        }
+                    });
             }, providedUrl ? 0 : 350); // Fast 350ms delay for smooth typing
         }
 
         // Hook up search input specifically for input event prioritizing letter-by-letter live search
         document.querySelector('.auto-search').addEventListener('input', () => handleAjaxSearch());
-        
+
         // Hook up date/select filters for change event natively without full refresh
         filterForm.querySelectorAll('input[type="date"], select').forEach(el => {
             el.addEventListener('change', () => handleAjaxSearch());
         });
 
         // Intercept pagination anchors and reset buttons to be smooth AJAX as well
-        document.addEventListener('click', function(e) {
+        document.addEventListener('click', function (e) {
             const pageLink = e.target.closest('#pagination-container a');
             if (pageLink) {
                 e.preventDefault();
@@ -1145,6 +1620,623 @@ $containers = $stmt->fetchAll();
                 handleAjaxSearch(resetLink.getAttribute('href'));
             }
         });
+        // --- Other Purchases Logic ---
+        const purchaseModal = document.getElementById('purchase-modal-container');
+        const pExpensesList = document.getElementById('p-expenses-list');
+        const pPaymentsList = document.getElementById('p-payments-list');
+
+        function openPurchaseModal(mode = 'add') {
+            document.getElementById('p-modal-title').innerText = mode === 'add' ? "Add New Purchase" : "Edit Purchase";
+            document.getElementById('purchase-form').reset();
+            document.getElementById('p_id').value = '';
+            document.getElementById('p-items-list').innerHTML = '';
+            pExpensesList.innerHTML = '';
+            pPaymentsList.innerHTML = '';
+            
+            if (mode === 'add') {
+                fetch('?action=get_next_purchase_number')
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) {
+                            document.getElementById('p_purchase_number').value = data.next;
+                        }
+                    });
+            }
+            
+            purchaseModal.classList.remove('hidden');
+            document.body.classList.add('overflow-hidden');
+            calculatePurchaseTotals();
+        }
+
+        function closePurchaseModal() {
+            purchaseModal.classList.add('hidden');
+            document.body.classList.remove('overflow-hidden');
+        }
+
+        function addPurchaseItemRow(name = '', qty = '', price = '') {
+            const rowId = 'p_item_' + Date.now() + Math.random();
+            const html = `
+                <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 bg-slate-50/50 p-4 rounded-2xl border border-slate-100 relative group" id="${rowId}">
+                    <div class="col-span-2 lg:col-span-1 flex flex-col space-y-2">
+                        <label class="text-[10px] uppercase font-bold text-slate-500">Item Name</label>
+                        <input type="text" name="p_item_names[]" class="input-glass" value="${name}" required>
+                    </div>
+                    <div class="flex flex-col space-y-2">
+                        <label class="text-[10px] uppercase font-bold text-slate-500">Qty</label>
+                        <input type="number" name="p_item_qtys[]" class="input-glass text-center" value="${qty}" required oninput="calculatePurchaseTotals()">
+                    </div>
+                    <div class="flex flex-col space-y-2">
+                        <label class="text-[10px] uppercase font-bold text-slate-500">Price/Item</label>
+                        <input type="number" step="0.01" name="p_item_prices[]" class="input-glass text-right" value="${price}" required oninput="calculatePurchaseTotals()">
+                    </div>
+                    <div class="flex flex-col space-y-2">
+                        <label class="text-[10px] uppercase font-bold text-indigo-600">Line Total</label>
+                        <input type="hidden" class="p_item_line_totals" value="0">
+                        <div class="p_disp_line_total h-[42px] flex items-center justify-end px-3 bg-white rounded-xl border border-indigo-100 font-bold text-indigo-600">Rs. 0.00</div>
+                    </div>
+                    <button type="button" onclick="document.getElementById('${rowId}').remove(); calculatePurchaseTotals();" class="absolute -right-2 -top-2 bg-rose-500 text-white w-6 h-6 rounded-full text-[10px] items-center justify-center flex shadow-lg hover:scale-110">
+                        <i class="fa-solid fa-times"></i>
+                    </button>
+                </div>
+            `;
+            document.getElementById('p-items-list').insertAdjacentHTML('beforeend', html);
+        }
+
+        function addPurchaseExpenseRow(name = '', amount = '') {
+            const rowId = 'p_exp_' + Date.now() + Math.random();
+            const html = `
+                <div class="grid grid-cols-2 lg:grid-cols-3 gap-3 items-center group relative bg-white/40 p-3 rounded-xl border border-slate-200/60 shadow-sm" id="${rowId}">
+                    <div class="col-span-1 lg:col-span-2">
+                        <input type="text" name="expense_names[]" placeholder="Expense Name" class="input-glass w-full" value="${name}" required>
+                    </div>
+                    <div class="col-span-1">
+                        <input type="number" step="0.01" name="expense_amounts[]" placeholder="Amount" class="input-glass w-full text-right" oninput="calculatePurchaseTotals()" value="${amount}" required>
+                    </div>
+                    <button type="button" onclick="document.getElementById('${rowId}').remove(); calculatePurchaseTotals();" class="absolute -right-2 -top-2 bg-rose-500 text-white w-6 h-6 rounded-full text-[10px] items-center justify-center flex shadow-lg hover:scale-110">
+                        <i class="fa-solid fa-times"></i>
+                    </button>
+                </div>
+            `;
+            pExpensesList.insertAdjacentHTML('beforeend', html);
+        }
+
+        function addPurchasePaymentRow(data = null) {
+            const rowId = 'p_pay_' + Date.now() + Math.random();
+            const html = `
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3 bg-white/50 p-4 rounded-xl border border-slate-200 relative group" id="${rowId}">
+                    <div class="md:col-span-2">
+                        <input type="text" name="p_payment_bank[]" placeholder="Bank Name" class="input-glass w-full" oninput="suggestBanks(this)" value="${data ? data.bank_name : ''}" required>
+                    </div>
+                    <div>
+                        <input type="number" step="0.01" name="p_payment_amount[]" placeholder="Amount" class="input-glass w-full text-right" oninput="calculatePurchaseTotals()" value="${data ? data.amount : ''}" required>
+                    </div>
+                    <div>
+                        <input type="date" name="p_payment_date[]" class="input-glass w-full" value="${data ? data.payment_date : '<?php echo date('Y-m-d'); ?>'}" required>
+                    </div>
+                    <button type="button" onclick="document.getElementById('${rowId}').remove(); calculatePurchaseTotals();" class="absolute -right-2 -top-2 bg-rose-500 text-white w-6 h-6 rounded-full text-[10px] flex items-center justify-center shadow-lg">
+                        <i class="fa-solid fa-times"></i>
+                    </button>
+                </div>
+            `;
+            pPaymentsList.insertAdjacentHTML('beforeend', html);
+        }
+
+        function calculatePurchaseTotals() {
+            let subtotal = 0;
+            const items = document.querySelectorAll('#p-items-list .grid');
+            items.forEach(row => {
+                const qty = parseFloat(row.querySelector('input[name="p_item_qtys[]"]').value) || 0;
+                const price = parseFloat(row.querySelector('input[name="p_item_prices[]"]').value) || 0;
+                const lineTotal = qty * price;
+                row.querySelector('.p_item_line_totals').value = lineTotal;
+                row.querySelector('.p_disp_line_total').innerText = 'Rs. ' + lineTotal.toLocaleString(undefined, {minimumFractionDigits: 2});
+                subtotal += lineTotal;
+            });
+            
+            document.getElementById('p_disp_sub_total').innerText = 'Rs. ' + subtotal.toLocaleString(undefined, {minimumFractionDigits: 2});
+
+            const discount = parseFloat(document.getElementById('p_discount').value) || 0;
+            const discountedSubtotal = subtotal - discount;
+            
+            // Add expenses
+            let expenses = 0;
+            document.querySelectorAll('input[name="expense_amounts[]"]').forEach(input => {
+                expenses += parseFloat(input.value) || 0;
+            });
+            
+            document.getElementById('p_disp_total_expenses').innerText = 'Rs. ' + expenses.toLocaleString(undefined, {minimumFractionDigits: 2});
+
+            const grandTotal = discountedSubtotal + expenses;
+            document.getElementById('p_disp_grand_total').innerText = 'Rs. ' + grandTotal.toLocaleString(undefined, {minimumFractionDigits: 2});
+            
+            // Add payments
+            let paid = 0;
+            document.querySelectorAll('input[name="p_payment_amount[]"]').forEach(input => {
+                paid += parseFloat(input.value) || 0;
+            });
+            
+            document.getElementById('p-total-paid-disp').innerText = 'Rs. ' + paid.toLocaleString(undefined, {minimumFractionDigits: 2});
+            document.getElementById('p-bal-due-disp').innerText = 'Rs. ' + (grandTotal - paid).toLocaleString(undefined, {minimumFractionDigits: 2});
+        }
+
+        function suggestBuyers(input) {
+            const val = input.value;
+            const resBox = document.getElementById('buyer-suggestions');
+            if (val.length < 1) { resBox.classList.add('hidden'); return; }
+
+            fetch(`?action=search_buyer&term=${encodeURIComponent(val)}`)
+                .then(r => r.json())
+                .then(data => {
+                    resBox.innerHTML = '';
+                    if (data.length > 0) {
+                        data.forEach(name => {
+                            const div = document.createElement('div');
+                            div.className = 'px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm font-medium border-b border-slate-50 last:border-0';
+                            div.innerText = name;
+                            div.onclick = () => { input.value = name; resBox.classList.add('hidden'); };
+                            resBox.appendChild(div);
+                        });
+                        resBox.classList.remove('hidden');
+                    } else {
+                        resBox.classList.add('hidden');
+                    }
+                });
+        }
+
+        function suggestBanks(input) {
+            const val = input.value;
+            // Create suggestion box if not exists
+            let resBox = input.parentNode.querySelector('.bank-suggestions');
+            if (!resBox) {
+                resBox = document.createElement('div');
+                resBox.className = 'bank-suggestions absolute left-0 top-full mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-xl hidden z-[100] max-h-40 overflow-y-auto';
+                input.parentNode.style.position = 'relative';
+                input.parentNode.appendChild(resBox);
+            }
+            
+            if (val.length < 1) { resBox.classList.add('hidden'); return; }
+
+            fetch(`?action=search_bank&term=${encodeURIComponent(val)}`)
+                .then(r => r.json())
+                .then(data => {
+                    resBox.innerHTML = '';
+                    if (data.length > 0) {
+                        data.forEach(name => {
+                            const div = document.createElement('div');
+                            div.className = 'px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm font-medium border-b border-slate-50 last:border-0';
+                            div.innerText = name;
+                            div.onclick = () => { input.value = name; resBox.classList.add('hidden'); };
+                            resBox.appendChild(div);
+                        });
+                        resBox.classList.remove('hidden');
+                    } else {
+                        resBox.classList.add('hidden');
+                    }
+                });
+        }
+
+        function savePurchase(e) {
+            e.preventDefault();
+            const formData = new FormData();
+            formData.append('action', 'save_purchase');
+            formData.append('id', document.getElementById('p_id').value);
+            formData.append('purchase_number', document.getElementById('p_purchase_number').value);
+            formData.append('purchase_date', document.getElementById('p_purchase_date').value);
+            formData.append('bill_number', document.getElementById('p_bill_number').value);
+            formData.append('buyer_name', document.getElementById('p_buyer_name').value);
+            formData.append('discount', document.getElementById('p_discount').value);
+
+            const p_items = [];
+            document.querySelectorAll('#p-items-list .grid').forEach(row => {
+                p_items.push({
+                    name: row.querySelector('input[name="p_item_names[]"]').value,
+                    qty: row.querySelector('input[name="p_item_qtys[]"]').value,
+                    price: row.querySelector('input[name="p_item_prices[]"]').value
+                });
+            });
+            formData.append('items', JSON.stringify(p_items));
+
+            const expenses = [];
+            document.querySelectorAll('#p-expenses-list .grid').forEach(row => {
+                expenses.push({
+                    name: row.querySelector('input[name="expense_names[]"]').value,
+                    amount: row.querySelector('input[name="expense_amounts[]"]').value
+                });
+            });
+            formData.append('expenses', JSON.stringify(expenses));
+
+            const payments = [];
+            document.querySelectorAll('#p-payments-list .grid').forEach(row => {
+                payments.push({
+                    bank_name: row.querySelector('input[name="p_payment_bank[]"]').value,
+                    amount: row.querySelector('input[name="p_payment_amount[]"]').value,
+                    payment_date: row.querySelector('input[name="p_payment_date[]"]').value,
+                    method: 'Account Transfer', // Defaulting for simple purchases
+                    description: '',
+                    cheque_number: ''
+                });
+            });
+            formData.append('payments', JSON.stringify(payments));
+            
+            fetch('', { method: 'POST', body: formData })
+                .then(r => r.json())
+                .then(res => {
+                    if (res.success) {
+                        location.reload();
+                    } else {
+                        alert(res.message);
+                    }
+                });
+        }
+
+        function editPurchase(id) {
+            fetch(`?action=get_purchase_details&id=${id}`)
+                .then(r => r.json())
+                .then(res => {
+                    if (res.success) {
+                        openPurchaseModal('edit');
+                        const d = res.data;
+                        document.getElementById('p_id').value = d.id;
+                        document.getElementById('p_purchase_number').value = d.purchase_number;
+                        document.getElementById('p_purchase_date').value = d.purchase_date;
+                        document.getElementById('p_bill_number').value = d.bill_number;
+                        document.getElementById('p_buyer_name').value = d.buyer_name;
+                        document.getElementById('p_discount').value = d.discount;
+                        
+                        document.getElementById('p-items-list').innerHTML = '';
+                        d.items.forEach(it => addPurchaseItemRow(it.item_name, it.qty, it.price_per_item));
+                        
+                        pExpensesList.innerHTML = '';
+                        d.expenses.forEach(ex => addPurchaseExpenseRow(ex.expense_name, ex.amount));
+                        
+                        pPaymentsList.innerHTML = '';
+                        d.payments.forEach(py => addPurchasePaymentRow(py));
+                        
+                        calculatePurchaseTotals();
+                    }
+                });
+        }
+
+        function deletePurchase(id, no) {
+            if (confirm(`Are you sure you want to delete purchase ${no}?`)) {
+                const formData = new FormData();
+                formData.append('action', 'delete_purchase');
+                formData.append('id', id);
+                fetch('', { method: 'POST', body: formData })
+                    .then(r => r.json())
+                    .then(res => {
+                        if (res.success) location.reload();
+                        else alert(res.message);
+                    });
+            }
+        }
+    </script>
+    
+    <!-- Payment Modals for Other Purchases -->
+    <!-- Modal: Add Payment -->
+    <div id="op-add-payment-modal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[100] flex items-center justify-center p-4 hidden">
+        <div class="bg-white/95 backdrop-blur-xl border border-slate-200 w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-3xl p-1 text-slate-800 shadow-2xl">
+             <div class="p-6">
+                <div class="flex items-center justify-between mb-8">
+                    <div>
+                        <h3 class="text-xl font-black text-slate-900 font-['Outfit']">Record New Payment</h3>
+                        <p id="op-add-payment-cust-name" class="text-[10px] uppercase font-black text-indigo-500 tracking-widest mt-1">SUPPLIER / BUYER NAME</p>
+                    </div>
+                    <button onclick="closeOtherPurchaseAddPayment()" class="text-slate-400 hover:text-rose-500 transition-colors"><i class="fa-solid fa-times text-2xl"></i></button>
+                </div>
+
+                <form id="op-payment-form" class="space-y-6">
+                    <input type="hidden" name="tab" value="given">
+                    <input type="hidden" name="ref_id" id="op_payment_ref_id">
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="col-span-2 sm:col-span-1">
+                            <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Amount (LKR)</label>
+                            <input type="number" step="0.01" name="amount" id="op_payment_amount" class="input-glass w-full" required>
+                        </div>
+                        <div class="col-span-2 sm:col-span-1">
+                            <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Payment Type</label>
+                            <select name="type" id="op_payment_type" class="input-glass w-full appearance-none cursor-pointer" onchange="toggleOpPaymentFields()" required>
+                                <option value="Cash">Cash</option>
+                                <option value="Account Transfer">Account Transfer</option>
+                                <option value="Cheque">Cheque</option>
+                                <option value="Card">Card</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="col-span-2 sm:col-span-1">
+                            <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Transaction Date</label>
+                            <input type="date" name="date" class="input-glass w-full" value="<?php echo date('Y-m-d'); ?>" required>
+                        </div>
+                    </div>
+
+                    <!-- Bank Section -->
+                    <div id="op_bank_section" class="hidden space-y-4 animate-[fadeIn_0.3s_ease]">
+                        <div class="relative">
+                            <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Select Bank Account</label>
+                            <input type="text" placeholder="Search saved banks..." class="input-glass w-full" onkeyup="searchOpBanks(this.value)">
+                            <div id="op_bank_results" class="hidden absolute w-full top-[110%] left-0 z-30 bg-white/95 backdrop-blur-xl border border-slate-200 rounded-2xl shadow-2xl p-2 max-h-[200px] overflow-y-auto"></div>
+                            <input type="hidden" name="bank_id" id="op_selected_bank_id">
+                        </div>
+                        <div id="op_selected_bank_info" class="hidden bg-indigo-50 p-4 rounded-2xl border border-indigo-100 flex items-center justify-between">
+                            <div>
+                                <p id="op_disp_bank_name" class="text-sm font-black text-indigo-900"></p>
+                                <p id="op_disp_bank_acc" class="text-[10px] font-bold text-indigo-400"></p>
+                            </div>
+                            <button type="button" onclick="clearOpBank()" class="text-rose-500 hover:scale-110 transition-transform"><i class="fa-solid fa-circle-xmark"></i></button>
+                        </div>
+                    </div>
+
+                    <!-- Cheque Section -->
+                    <div id="op_cheque_section" class="hidden space-y-4 animate-[fadeIn_0.3s_ease]">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="col-span-2 sm:col-span-1">
+                                <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Cheque Number</label>
+                                <input type="text" name="chq_no" class="input-glass w-full" placeholder="XXXXXX">
+                            </div>
+                            <div class="col-span-2 sm:col-span-1">
+                                <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Cheque Payer</label>
+                                <input type="text" name="chq_payer" placeholder="Enter payer name (Optional)" class="input-glass w-full">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Proof Section -->
+                    <div id="op_proof_section" class="hidden animate-[fadeIn_0.3s_ease]">
+                        <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Payment Proof (Image)</label>
+                        <div class="relative">
+                            <input type="file" name="proof" id="op_payment_proof" class="hidden" accept="image/*" onchange="previewOpProof(this)">
+                            <button type="button" onclick="document.getElementById('op_payment_proof').click()" class="w-full flex items-center justify-center gap-3 p-8 border-2 border-dashed border-slate-300 rounded-2xl hover:bg-slate-50 hover:border-indigo-400 transition-all text-slate-400 group">
+                                <i class="fa-solid fa-cloud-arrow-up text-3xl group-hover:scale-110 transition-transform"></i>
+                                <span class="text-[10px] font-black uppercase tracking-widest">Click to upload scan/photo</span>
+                            </button>
+                            <div id="op_proof_preview" class="hidden mt-4 relative rounded-2xl overflow-hidden border border-slate-100">
+                                <img src="" alt="Proof Preview" class="w-full h-auto">
+                                <button type="button" onclick="clearOpProof()" class="absolute top-3 right-3 bg-rose-500 text-white w-8 h-8 rounded-full flex items-center justify-center shadow-lg"><i class="fa-solid fa-times"></i></button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="w-full bg-slate-900 hover:bg-black text-white py-5 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl transition-all active:scale-[0.98]">
+                        Confirm Save Payment
+                    </button>
+                </form>
+             </div>
+        </div>
+    </div>
+
+    <!-- Modal: History -->
+    <div id="op-history-modal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-[90] flex items-center justify-center p-4 hidden">
+        <div class="bg-white/95 backdrop-blur-xl border border-slate-200 w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-3xl p-8 text-slate-800 shadow-2xl relative">
+            <div class="flex items-center justify-between mb-8">
+                <div>
+                    <h3 class="text-xl font-black text-slate-900 font-['Outfit']">Payment History</h3>
+                    <p id="op-history-cust-name" class="text-[10px] uppercase font-black text-indigo-500 tracking-widest mt-1">SUPPLIER</p>
+                </div>
+                <div class="flex items-center gap-4">
+                    <button id="op-add-btn-in-history" onclick="" class="bg-emerald-600 text-white hover:bg-black px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors shadow-lg shadow-emerald-600/20">
+                        <i class="fa-solid fa-plus mr-1"></i> Add Payment
+                    </button>
+                    <button onclick="closeOtherPurchaseHistory()" class="text-slate-400 hover:text-rose-500 transition-colors"><i class="fa-solid fa-times text-2xl"></i></button>
+                </div>
+            </div>
+            <div id="op-history-content" class="overflow-x-auto min-h-[300px]">
+                <!-- History Table Area -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Add Bank Modal -->
+    <div id="op-create-bank-modal" class="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-[110] hidden items-center justify-center p-4">
+        <div class="bg-white/95 backdrop-blur-xl border border-slate-200 w-full max-w-md p-7 text-slate-800 rounded-3xl shadow-2xl">
+            <div class="flex items-center justify-between mb-6">
+                <div>
+                    <h4 class="text-lg font-black text-slate-900 font-['Outfit']">Add New Bank</h4>
+                    <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-1">Register a new bank account</p>
+                </div>
+                <button type="button" onclick="closeOpCreateBankModal()" class="text-slate-400 hover:text-rose-500 transition-colors"><i class="fa-solid fa-times text-xl"></i></button>
+            </div>
+            <div class="space-y-4">
+                <div>
+                    <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Bank Name</label>
+                    <input type="text" id="op_new_bank_name" class="input-glass w-full" placeholder="e.g. Bank of Ceylon">
+                </div>
+                <div>
+                    <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Account Number</label>
+                    <input type="text" id="op_new_bank_acc_no" class="input-glass w-full" placeholder="e.g. 0023456789">
+                </div>
+                <div>
+                    <label class="text-[10px] uppercase font-black text-slate-500 mb-2 ml-1 block tracking-widest">Account Name</label>
+                    <input type="text" id="op_new_bank_acc_name" class="input-glass w-full" placeholder="e.g. Crystal Distributors">
+                </div>
+                <button type="button" onclick="saveOpNewBank()" class="w-full mt-2 bg-indigo-600 hover:bg-indigo-700 text-white py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-colors shadow-lg shadow-indigo-600/20">
+                    <i class="fa-solid fa-floppy-disk mr-2"></i>Save Bank
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // OTHER PURCHASES PAYMENT MANAGEMENT LOGIC 
+        // Hooked into managePayments.php to prevent duplication!
+        function openOtherPurchaseHistory(refId, name, pending) {
+            document.getElementById('op-history-cust-name').innerText = name;
+            
+            // Wire the internal add payment button 
+            const addBtn = document.getElementById('op-add-btn-in-history');
+            if(pending > 0) {
+                addBtn.style.display = 'inline-flex';
+                addBtn.onclick = function() { openOtherPurchaseAddPayment(refId, name, pending); };
+            } else {
+                addBtn.style.display = 'none'; // fully paid
+            }
+
+            const container = document.getElementById('op-history-content');
+            container.innerHTML = '<div class="flex items-center justify-center py-20"><i class="fa-solid fa-spinner fa-spin text-3xl text-indigo-500"></i></div>';
+            document.getElementById('op-history-modal').classList.remove('hidden');
+
+            fetch(`managePayments.php?action=get_history&ref_id=${refId}&tab=given`)
+                .then(r => r.json())
+                .then(res => {
+                    if(!res.success) return alert(res.message);
+                    let html = `
+                        <table class="w-full text-left">
+                            <thead>
+                                <tr class="text-[10px] uppercase font-black text-slate-600 border-b border-slate-200">
+                                    <th class="pb-3 px-2">Type</th>
+                                    <th class="pb-3 px-2">Date</th>
+                                    <th class="pb-3 px-2">Bank Details</th>
+                                    <th class="pb-3 px-2 text-center">Proof</th>
+                                    <th class="pb-3 px-2 text-center">Chq#</th>
+                                    <th class="pb-3 px-2 text-right">Amount</th>
+                                    <th class="pb-3 px-2 text-center">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-100">
+                    `;
+
+                    res.data.forEach(p => {
+                        html += `
+                            <tr class="text-[12px] font-bold text-slate-800 hover:bg-slate-50 transition-colors">
+                                <td class="py-4 px-2">
+                                    <span class="bg-indigo-100 text-indigo-800 px-2.5 py-1.5 rounded-md text-[10px] uppercase font-black ring-1 ring-indigo-200">${p.payment_type}</span>
+                                </td>
+                                <td class="py-4 px-2 text-slate-800 font-extrabold">${new Date(p.payment_date).toLocaleDateString()}</td>
+                                <td class="py-4 px-2">
+                                    ${p.bank_name ? `<p class="text-slate-900 leading-none mb-1 font-black">${p.bank_name}</p><p class="text-[10px] text-slate-600 font-bold uppercase">${p.bank_acc}</p>` : '<span class="text-slate-400 italic font-medium">N/A</span>'}
+                                    ${p.cheque_payer ? `<p class="text-[10px] text-indigo-600 font-black mt-1 uppercase tracking-tighter">Payer: ${p.cheque_payer}</p>` : ''}
+                                </td>
+                                <td class="py-4 px-2 text-center">
+                                    ${p.proof_image ? `<a href="../uploads/payments/${p.proof_image}" target="_blank" class="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white transition-all inline-flex items-center justify-center border border-emerald-200 shadow-sm" title="View Proof"><i class="fa-solid fa-image text-xs"></i></a>` : '<span class="text-[10px] text-slate-400 font-bold uppercase">N/A</span>'}
+                                </td>
+                                <td class="py-4 px-2 text-center">
+                                    <span class="text-[12px] text-slate-700 font-black">${p.cheque_number || '-'}</span>
+                                </td>
+                                <td class="py-4 px-2 text-right font-black text-slate-900 leading-tight">LKR ${parseFloat(p.amount).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                                <td class="py-4 px-2 text-center">
+                                    <button onclick="deleteOtherPurchasePayment(${p.id})" class="text-rose-500 hover:text-rose-700 transition-all p-2 hover:bg-rose-100 rounded-lg"><i class="fa-solid fa-trash-can"></i></button>
+                                </td>
+                            </tr>
+                        `;
+                    });
+
+                    if(res.data.length === 0) html += '<tr><td colspan="7" class="py-10 text-center text-slate-500 italic font-bold">No transactions recorded.</td></tr>';
+                    
+                    html += '</tbody></table>';
+                    container.innerHTML = html;
+                });
+        }
+
+        function closeOtherPurchaseHistory() {
+            document.getElementById('op-history-modal').classList.add('hidden');
+        }
+
+        function deleteOtherPurchasePayment(id) {
+            if(!confirm('Are you sure you want to delete this payment record?')) return;
+            fetch('managePayments.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: `action=delete_payment&id=${id}&tab=given`
+            }).then(r => r.json()).then(data => {
+                if(data.success) location.reload(); else alert(data.message);
+            });
+        }
+
+        function openOtherPurchaseAddPayment(refId, name, pending) {
+            document.getElementById('op_payment_ref_id').value = refId;
+            document.getElementById('op-add-payment-cust-name').innerText = name;
+            document.getElementById('op_payment_amount').value = pending > 0 ? pending.toFixed(2) : '';
+            document.getElementById('op-add-payment-modal').classList.remove('hidden');
+            toggleOpPaymentFields();
+        }
+
+        function closeOtherPurchaseAddPayment() {
+            document.getElementById('op-add-payment-modal').classList.add('hidden');
+            document.getElementById('op-payment-form').reset();
+            clearOpBank();
+            clearOpProof();
+        }
+
+        function toggleOpPaymentFields() {
+            const type = document.getElementById('op_payment_type').value;
+            document.getElementById('op_bank_section').classList.toggle('hidden', type !== 'Account Transfer' && type !== 'Cheque');
+            document.getElementById('op_cheque_section').classList.toggle('hidden', type !== 'Cheque');
+            document.getElementById('op_proof_section').classList.toggle('hidden', type !== 'Account Transfer' && type !== 'Cheque');
+        }
+
+        function searchOpBanks(term) {
+            const res = document.getElementById('op_bank_results');
+            if(term.length < 2) return res.classList.add('hidden');
+            fetch(`managePayments.php?action=search_bank&term=${term}`)
+                .then(r => r.json())
+                .then(data => {
+                    let html = '';
+                    data.forEach(b => {
+                        html += `<div class="p-3 hover:bg-slate-100 cursor-pointer rounded-xl border-b border-slate-100 last:border-0" onclick="selectOpBank(${b.id}, '${b.name}', '${b.account_number}')">
+                            <p class="text-xs font-black text-slate-800 uppercase">${b.name}</p><p class="text-[9px] font-bold text-slate-400">ACC: ${b.account_number}</p></div>`;
+                    });
+                    if(!data.length) html = `<div class="p-3 text-center"><p class="text-[9px] font-black text-slate-400 uppercase mb-3">Not found</p><button type="button" onclick="openOpCreateBankModal('${term}')" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2.5 rounded-xl text-[10px] font-black uppercase">Create New</button></div>`;
+                    res.innerHTML = html; res.classList.remove('hidden');
+                });
+        }
+
+        function selectOpBank(id, name, acc) {
+            document.getElementById('op_selected_bank_id').value = id;
+            document.getElementById('op_disp_bank_name').innerText = name;
+            document.getElementById('op_disp_bank_acc').innerText = acc;
+            document.getElementById('op_selected_bank_info').classList.remove('hidden');
+            document.getElementById('op_bank_results').classList.add('hidden');
+        }
+
+        function clearOpBank() {
+            document.getElementById('op_selected_bank_id').value = '';
+            document.getElementById('op_selected_bank_info').classList.add('hidden');
+        }
+
+        function openOpCreateBankModal(prefill) {
+            document.getElementById('op_new_bank_name').value = prefill || '';
+            document.getElementById('op-create-bank-modal').classList.remove('hidden');
+            document.getElementById('op-create-bank-modal').classList.add('flex');
+            document.getElementById('op_bank_results').classList.add('hidden');
+        }
+        function closeOpCreateBankModal() {
+            document.getElementById('op-create-bank-modal').classList.add('hidden');
+            document.getElementById('op-create-bank-modal').classList.remove('flex');
+        }
+        function saveOpNewBank() {
+            const name = document.getElementById('op_new_bank_name').value;
+            const acc_no = document.getElementById('op_new_bank_acc_no').value;
+            const acc_name = document.getElementById('op_new_bank_acc_name').value;
+            if(!name) return alert('Name required');
+            const fd = new FormData(); fd.append('action','create_bank'); fd.append('name',name); fd.append('acc_no',acc_no); fd.append('acc_name',acc_name);
+            fetch('managePayments.php', { method: 'POST', body: fd }).then(r=>r.json()).then(data=>{
+                if(data.success) { selectOpBank(data.id, name, acc_no); closeOpCreateBankModal(); } else alert('Error');
+            });
+        }
+
+        function previewOpProof(input) {
+            if(input.files && input.files[0]) {
+                const r = new FileReader();
+                r.onload = e => { document.querySelector('#op_proof_preview img').src = e.target.result; document.getElementById('op_proof_preview').classList.remove('hidden'); }
+                r.readAsDataURL(input.files[0]);
+            }
+        }
+        function clearOpProof() {
+            document.getElementById('op_payment_proof').value = ''; document.getElementById('op_proof_preview').classList.add('hidden');
+        }
+
+        document.getElementById('op-payment-form').onsubmit = function(e) {
+            e.preventDefault();
+            const fd = new FormData(this); fd.append('action', 'save_payment');
+            const btn = this.querySelector('button[type="submit"]');
+            btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> PROCESSING...';
+            fetch('managePayments.php', { method: 'POST', body: fd }).then(r=>r.json()).then(data=>{
+                if(data.success) location.reload(); else { alert(data.message); btn.disabled=false; btn.innerText='Confirm Save Payment'; }
+            });
+        }
     </script>
 </body>
+
 </html>

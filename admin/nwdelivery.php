@@ -22,7 +22,7 @@ if ($action == 'search_employee') {
 
 if ($action == 'search_customer') {
     $term = '%' . $_GET['term'] . '%';
-    $stmt = $pdo->prepare("SELECT id, name, contact_number, address FROM customers WHERE name LIKE ? OR contact_number LIKE ? LIMIT 5");
+    $stmt = $pdo->prepare("SELECT DISTINCT id, name, contact_number, address FROM customers WHERE name LIKE ? OR contact_number LIKE ? LIMIT 5");
     $stmt->execute([$term, $term]);
     echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
     exit;
@@ -30,35 +30,49 @@ if ($action == 'search_customer') {
 
 if ($action == 'search_brand_stock') {
     $term = $_GET['term'] ?? '';
-    if (empty($term)) {
-        // Show top 3 by quantity if no term provided
-        $stmt = $pdo->prepare("
-            SELECT b.id as brand_id, b.name as brand_name, 
-                   ci.id as item_id, ci.total_qty, ci.sold_qty, (ci.total_qty - ci.sold_qty) as available_qty,
-                   c.container_number, c.country, c.arrival_date, c.per_item_cost
-            FROM container_items ci
-            JOIN brands b ON ci.brand_id = b.id
-            JOIN containers c ON ci.container_id = c.id
-            WHERE (ci.total_qty - ci.sold_qty) > 0
-            ORDER BY available_qty DESC
-            LIMIT 3
-        ");
-        $stmt->execute();
-    } else {
-        $termParam = '%' . $term . '%';
-        $stmt = $pdo->prepare("
-            SELECT b.id as brand_id, b.name as brand_name, 
-                   ci.id as item_id, ci.total_qty, ci.sold_qty, (ci.total_qty - ci.sold_qty) as available_qty,
-                   c.container_number, c.country, c.arrival_date, c.per_item_cost
-            FROM container_items ci
-            JOIN brands b ON ci.brand_id = b.id
-            JOIN containers c ON ci.container_id = c.id
-            WHERE b.name LIKE ? AND (ci.total_qty - ci.sold_qty) > 0
-            ORDER BY available_qty DESC
-            LIMIT 10
-        ");
-        $stmt->execute([$termParam]);
+    $termParam = '%' . $term . '%';
+    
+    // Search from Container Items (Glass)
+    $query1 = "
+        SELECT b.id as brand_id, b.name as brand_name, 
+               ci.id as item_id, ci.total_qty, ci.sold_qty, (ci.total_qty - ci.sold_qty) as available_qty,
+               c.container_number, c.country, c.arrival_date, c.per_item_cost as per_item_cost,
+               'container' as item_source
+        FROM container_items ci
+        JOIN brands b ON ci.brand_id = b.id
+        JOIN containers c ON ci.container_id = c.id
+        WHERE (ci.total_qty - ci.sold_qty) > 0
+    ";
+    
+    if (!empty($term)) {
+        $query1 .= " AND b.name LIKE ?";
     }
+
+    // Search from Other Purchases
+    $query2 = "
+        SELECT 0 as brand_id, opi.item_name as brand_name,
+               opi.id as item_id, opi.qty as total_qty, opi.sold_qty, (opi.qty - opi.sold_qty) as available_qty,
+               op.purchase_number as container_number, 'Direct' as country, op.purchase_date as arrival_date, opi.price_per_item as per_item_cost,
+               'other' as item_source
+        FROM other_purchase_items opi
+        JOIN other_purchases op ON opi.purchase_id = op.id
+        WHERE (opi.qty - opi.sold_qty) > 0
+    ";
+    
+    if (!empty($term)) {
+        $query2 .= " AND opi.item_name LIKE ?";
+    }
+
+    $fullQuery = "($query1) UNION ALL ($query2) ORDER BY available_qty DESC LIMIT 10";
+    $stmt = $pdo->prepare($fullQuery);
+    
+    $params = [];
+    if (!empty($term)) {
+        $params[] = $termParam;
+        $params[] = $termParam;
+    }
+    
+    $stmt->execute($params);
     echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
     exit;
 }
@@ -103,10 +117,14 @@ if ($action == 'save_delivery') {
 
         if ($editing_id) {
             // Revert old stock before deleting old items
-            $old_items = $pdo->prepare("SELECT di.container_item_id, di.qty FROM delivery_items di JOIN delivery_customers dc ON di.delivery_customer_id = dc.id WHERE dc.delivery_id = ?");
+            $old_items = $pdo->prepare("SELECT di.item_id, di.item_source, di.qty FROM delivery_items di JOIN delivery_customers dc ON di.delivery_customer_id = dc.id WHERE dc.delivery_id = ?");
             $old_items->execute([$editing_id]);
             foreach ($old_items->fetchAll() as $it) {
-                $pdo->prepare("UPDATE container_items SET sold_qty = GREATEST(0, sold_qty - ?) WHERE id = ?")->execute([$it['qty'], $it['container_item_id']]);
+                if ($it['item_source'] === 'container') {
+                    $pdo->prepare("UPDATE container_items SET sold_qty = GREATEST(0, sold_qty - ?) WHERE id = ?")->execute([$it['qty'], $it['item_id']]);
+                } else {
+                    $pdo->prepare("UPDATE other_purchases SET sold_qty = GREATEST(0, sold_qty - ?) WHERE id = ?")->execute([$it['qty'], $it['item_id']]);
+                }
             }
             
             // Delete associated items and employees to refresh them
@@ -191,15 +209,21 @@ if ($action == 'save_delivery') {
                 $line_total = ($qty - $dmg) * (float)$item['selling_price'] - $disc;
                 $customer_subtotal += $line_total;
                 $customer_discount += $disc;
+                $source = $item['item_source'] ?? 'container';
                 
-                $stmtStock = $pdo->prepare("UPDATE container_items SET sold_qty = sold_qty + ? WHERE id = ? AND (total_qty - sold_qty) >= ?");
+                if ($source === 'container') {
+                    $stmtStock = $pdo->prepare("UPDATE container_items SET sold_qty = sold_qty + ? WHERE id = ? AND (total_qty - sold_qty) >= ?");
+                } else {
+                    $stmtStock = $pdo->prepare("UPDATE other_purchase_items SET sold_qty = sold_qty + ? WHERE id = ? AND (qty - sold_qty) >= ?");
+                }
+                
                 $stmtStock->execute([$qty, $item['item_id'], $qty]);
                 if ($stmtStock->rowCount() === 0) {
-                    throw new Exception("Insufficient stock for product. Please check availability.");
+                    throw new Exception("Insufficient stock for #{$item['item_id']} ({$source}). Please check availability.");
                 }
 
-                $pdo->prepare("INSERT INTO delivery_items (delivery_customer_id, container_item_id, qty, damaged_qty, cost_price, selling_price, total) VALUES (?, ?, ?, ?, ?, ?, ?)")
-                    ->execute([$dc_id, $item['item_id'], $qty, $dmg, (float)$item['cost_price'], (float)$item['selling_price'], $line_total]);
+                $pdo->prepare("INSERT INTO delivery_items (delivery_customer_id, item_id, item_source, qty, damaged_qty, cost_price, selling_price, total) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+                    ->execute([$dc_id, $item['item_id'], $source, $qty, $dmg, (float)$item['cost_price'], (float)$item['selling_price'], $line_total]);
             }
             $pdo->prepare("UPDATE delivery_customers SET subtotal = ?, discount = ? WHERE id = ?")->execute([$customer_subtotal, $customer_discount, $dc_id]);
             $grand_total_sales += $customer_subtotal;
@@ -236,7 +260,28 @@ if ($action == 'view_delivery') {
         $custRows = $custs->fetchAll(PDO::FETCH_ASSOC);
 
         foreach ($custRows as &$cr) {
-            $items = $pdo->prepare("SELECT di.*, b.name as brand_name, c.container_number, (ci.total_qty - ci.sold_qty) as available_qty FROM delivery_items di JOIN container_items ci ON di.container_item_id = ci.id JOIN brands b ON ci.brand_id = b.id JOIN containers c ON ci.container_id = c.id WHERE di.delivery_customer_id = ?");
+            $items = $pdo->prepare("
+                SELECT di.*, 
+                CASE 
+                    WHEN di.item_source = 'container' THEN b.name 
+                    ELSE opi.item_name 
+                END as brand_name,
+                CASE 
+                    WHEN di.item_source = 'container' THEN c.container_number 
+                    ELSE op.purchase_number 
+                END as container_number,
+                CASE 
+                    WHEN di.item_source = 'container' THEN (ci.total_qty - ci.sold_qty) 
+                    ELSE (opi.qty - opi.sold_qty) 
+                END as available_qty 
+                FROM delivery_items di 
+                LEFT JOIN container_items ci ON di.item_id = ci.id AND di.item_source = 'container'
+                LEFT JOIN brands b ON ci.brand_id = b.id 
+                LEFT JOIN containers c ON ci.container_id = c.id 
+                LEFT JOIN other_purchase_items opi ON di.item_id = opi.id AND di.item_source = 'other'
+                LEFT JOIN other_purchases op ON opi.purchase_id = op.id
+                WHERE di.delivery_customer_id = ?
+            ");
             $items->execute([$cr['id']]);
             $cr['items'] = $items->fetchAll(PDO::FETCH_ASSOC);
 
@@ -373,9 +418,15 @@ if ($action == 'delete_delivery') {
     $id = (int)$_POST['id'];
     try {
         $pdo->beginTransaction();
-        $items = $pdo->prepare("SELECT di.container_item_id, di.qty FROM delivery_items di JOIN delivery_customers dc ON di.delivery_customer_id = dc.id WHERE dc.delivery_id = ?");
+        $items = $pdo->prepare("SELECT di.item_id, di.item_source, di.qty FROM delivery_items di JOIN delivery_customers dc ON di.delivery_customer_id = dc.id WHERE dc.delivery_id = ?");
         $items->execute([$id]);
-        foreach ($items->fetchAll() as $it) $pdo->prepare("UPDATE container_items SET sold_qty = GREATEST(0, sold_qty - ?) WHERE id = ?")->execute([$it['qty'], $it['container_item_id']]);
+        foreach ($items->fetchAll() as $it) {
+            if ($it['item_source'] === 'container') {
+                $pdo->prepare("UPDATE container_items SET sold_qty = GREATEST(0, sold_qty - ?) WHERE id = ?")->execute([$it['qty'], $it['item_id']]);
+            } else {
+                $pdo->prepare("UPDATE other_purchase_items SET sold_qty = GREATEST(0, sold_qty - ?) WHERE id = ?")->execute([$it['qty'], $it['item_id']]);
+            }
+        }
         $pdo->prepare("DELETE FROM deliveries WHERE id = ?")->execute([$id]);
         $pdo->commit();
         echo json_encode(['success' => true]);
@@ -1056,13 +1107,14 @@ $deliveries = $stmt->fetchAll();
                                     const itemId = addItemRow(blockId);
                                     const row = document.getElementById(`item-${itemId}`);
                                     if(row) {
-                                        const elId = row.querySelector('.item-id'); if(elId) elId.value = item.container_item_id || '';
+                                        const elId = row.querySelector('.item-id'); if(elId) elId.value = item.item_id || '';
+                                        const elSource = row.querySelector('.item-source'); if(elSource) elSource.value = item.item_source || 'container';
                                         const elSearch = row.querySelector('.item-search'); if(elSearch) elSearch.value = item.brand_name || '';
                                         const elQty = row.querySelector('.item-qty'); if(elQty) elQty.value = item.qty || 0;
                                         const elMaxQty = row.querySelector('.max-qty'); if(elMaxQty) elMaxQty.value = (parseFloat(item.available_qty) || 0) + (parseFloat(item.qty) || 0);
                                         const elDmg = row.querySelector('.item-dmg'); if(elDmg) elDmg.value = item.damaged_qty || 0;
                                         const elPrice = row.querySelector('.item-price'); if(elPrice) elPrice.value = item.selling_price || 0;
-                                        const elDiscount = row.querySelector('.item-discount'); if(elDiscount) elDiscount.value = item.discount_amount || 0;
+                                        const elDiscount = row.querySelector('.item-discount'); if(elDiscount) elDiscount.value = item.discount || 0;
                                         const elCost = row.querySelector('.cost-price'); if(elCost) elCost.value = item.cost_price || 0;
                                         
                                         const elBillNo = block.querySelector('.bill-number'); if(elBillNo) elBillNo.value = c.bill_number || '';
@@ -1388,6 +1440,7 @@ $deliveries = $stmt->fetchAll();
                             <input type="text" placeholder="Product..." class="input-glass w-full h-[36px] text-[11px] font-bold item-search" onkeyup="searchBrands(this.value, '${id}')" onfocus="searchBrands(this.value, '${id}')">
                             <div class="brand-results hidden absolute w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-[100] p-1"></div>
                             <input type="hidden" class="item-id">
+                            <input type="hidden" class="item-source" value="container">
                             <input type="hidden" class="cost-price">
                             <input type="hidden" class="max-qty">
                         </div>
@@ -1417,9 +1470,10 @@ $deliveries = $stmt->fetchAll();
             return id;
         }
 
-        function selectBrand(itemId, id, name, qty, cost) {
+        function selectBrand(itemId, id, name, qty, cost, source = 'container') {
             const row = document.getElementById(`item-${itemId}`);
             row.querySelector('.item-id').value = id;
+            row.querySelector('.item-source').value = source;
             row.querySelector('.item-search').value = `${name} (Stock: ${qty})`;
             row.querySelector('.cost-price').value = cost;
             row.querySelector('.max-qty').value = qty;
@@ -1450,7 +1504,7 @@ $deliveries = $stmt->fetchAll();
                         html += '<p class="px-2 py-1.5 text-[8px] font-black text-slate-400 uppercase tracking-widest bg-slate-50 mb-1 rounded">Stock Recommendations</p>';
                     }
                     data.forEach(b => {
-                        html += `<div class="p-2 hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-0" onmousedown="selectBrand('${itemId}', ${b.item_id}, '${b.brand_name}', ${b.available_qty}, ${b.per_item_cost})">
+                        html += `<div class="p-2 hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-0" onmousedown="selectBrand('${itemId}', ${b.item_id}, '${b.brand_name}', ${b.available_qty}, ${b.per_item_cost}, '${b.item_source}')">
                             <div class="flex justify-between items-center mb-1">
                                 <span class="text-xs font-black text-slate-800">${b.brand_name}</span>
                                 <span class="text-[9px] bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded font-black">${b.available_qty} PKTS</span>
@@ -1620,12 +1674,13 @@ $deliveries = $stmt->fetchAll();
                 const items = [];
                 b.querySelectorAll('.order-items .grid').forEach(r => {
                     const iid = r.querySelector('.item-id').value;
+                    const itemsource = r.querySelector('.item-source').value;
                     const q = r.querySelector('.item-qty').value;
                     const p = r.querySelector('.item-price').value;
                     const cp = r.querySelector('.cost-price').value;
                     const dmg = r.querySelector('.item-dmg').value;
                     const disc = r.querySelector('.item-discount').value;
-                    if(iid && q && p) items.push({item_id: iid, qty: q, selling_price: p, cost_price: cp, damaged_qty: dmg, discount: disc});
+                    if(iid && q && p) items.push({item_id: iid, item_source: itemsource, qty: q, selling_price: p, cost_price: cp, damaged_qty: dmg, discount: disc});
                 });
                 
                 const billNo = b.querySelector('.bill-number').value;

@@ -73,14 +73,20 @@ $pending_payments = (float)$stmtPending->fetchColumn();
 
 // 7. Most Sold Items (Pie Chart Data)
 $stmtItems = $pdo->prepare("
-    SELECT b.name as brand_name, SUM(di.qty) as total_qty 
+    SELECT 
+        CASE 
+            WHEN di.item_source = 'container' THEN COALESCE(b.name, 'Unknown Brand')
+            WHEN di.item_source = 'other' THEN COALESCE(opi.item_name, 'Other Item')
+        END as brand_name, 
+        SUM(di.qty) as total_qty 
     FROM delivery_items di 
-    JOIN container_items ci ON di.container_item_id = ci.id
-    JOIN brands b ON ci.brand_id = b.id
+    LEFT JOIN container_items ci ON di.item_source = 'container' AND di.item_id = ci.id
+    LEFT JOIN brands b ON ci.brand_id = b.id
+    LEFT JOIN other_purchase_items opi ON di.item_source = 'other' AND di.item_id = opi.id
     JOIN delivery_customers dc ON di.delivery_customer_id = dc.id 
     JOIN deliveries d ON dc.delivery_id = d.id 
     WHERE $whereClause 
-    GROUP BY b.name 
+    GROUP BY brand_name 
     ORDER BY total_qty DESC 
     LIMIT 10
 ");
@@ -125,18 +131,68 @@ $stmtTotalPayments = $pdo->prepare("
 $stmtTotalPayments->execute($params);
 $total_payments_got = (float)$stmtTotalPayments->fetchColumn();
 
-// NEW 10. Bank Account Aggregates
-$stmtBanks = $pdo->prepare("
-    SELECT b.name as bank_name, b.account_number, SUM(dp.amount) as total_amount
-    FROM delivery_payments dp
-    JOIN delivery_customers dc ON dp.delivery_customer_id = dc.id
-    JOIN deliveries d ON dc.delivery_id = d.id
-    JOIN banks b ON dp.bank_id = b.id
-    WHERE $whereClause
-    GROUP BY b.id
-");
-$stmtBanks->execute($params);
-$banks_data = $stmtBanks->fetchAll(PDO::FETCH_ASSOC);
+// ── Define POS WHERE conditions before loop ──
+$posWhere = ["1=1"];
+$posParams = [];
+if ($start_date) { $posWhere[] = "ps.sale_date >= ?"; $posParams[] = $start_date; }
+if ($end_date)   { $posWhere[] = "ps.sale_date <= ?"; $posParams[] = $end_date; }
+if ($month && $year && !$start_date && !$end_date) {
+    $posWhere[] = "MONTH(ps.sale_date) = ? AND YEAR(ps.sale_date) = ?";
+    $posParams[] = $month; $posParams[] = $year;
+}
+$posWhereClause = implode(" AND ", $posWhere);
+
+// NEW 10. Bank Account Aggregates (In & Out Flow)
+$stmtAllBanks = $pdo->query("SELECT id, name, account_number FROM banks");
+$allBanks = $stmtAllBanks->fetchAll(PDO::FETCH_ASSOC);
+
+$banks_data = [];
+foreach ($allBanks as $b) {
+    $bank_id = $b['id'];
+    
+    // RECEIVED: Deliveries
+    $stmt1 = $pdo->prepare("SELECT COALESCE(SUM(dp.amount),0) FROM delivery_payments dp JOIN delivery_customers dc ON dp.delivery_customer_id = dc.id JOIN deliveries d ON dc.delivery_id = d.id WHERE dp.bank_id = ? AND $whereClause");
+    $stmt1->execute(array_merge([$bank_id], $params));
+    $rec1 = (float)$stmt1->fetchColumn();
+    
+    // RECEIVED: POS Sales
+    $stmt2 = $pdo->prepare("SELECT COALESCE(SUM(psp.amount),0) FROM pos_sale_payments psp JOIN pos_sales ps ON psp.sale_id = ps.id WHERE psp.bank_id = ? AND $posWhereClause");
+    $stmt2->execute(array_merge([$bank_id], $posParams));
+    $rec2 = (float)$stmt2->fetchColumn();
+    
+    $total_received = $rec1 + $rec2;
+    
+    // PAID: Containers
+    $paid1 = 0; // Skipping container payments matching, schema omitted
+    
+    // PAID: Other Purchases
+    $opWhere2 = ["opp.bank_id = ?"];
+    $opParams2 = [$bank_id];
+    if ($start_date) { $opWhere2[] = "op.purchase_date >= ?"; $opParams2[] = $start_date; }
+    if ($end_date)   { $opWhere2[] = "op.purchase_date <= ?"; $opParams2[] = $end_date; }
+    if ($month && $year && !$start_date && !$end_date) {
+        $opWhere2[] = "MONTH(op.purchase_date) = ? AND YEAR(op.purchase_date) = ?";
+        $opParams2[] = $month; $opParams2[] = $year;
+    }
+    $opWhere2Clause = implode(" AND ", $opWhere2);
+
+    $stmt4 = $pdo->prepare("SELECT COALESCE(SUM(opp.amount),0) FROM other_purchase_payments opp JOIN other_purchases op ON opp.purchase_id = op.id WHERE $opWhere2Clause");
+    $stmt4->execute($opParams2);
+    $paid2 = (float)$stmt4->fetchColumn();
+    
+    $total_paid = $paid1 + $paid2;
+    $leftover = $total_received - $total_paid;
+    
+    if ($total_received > 0 || $total_paid > 0) {
+        $banks_data[] = [
+            'bank_name' => $b['name'],
+            'account_number' => $b['account_number'],
+            'total_received' => $total_received,
+            'total_paid' => $total_paid,
+            'leftover' => $leftover
+        ];
+    }
+}
 
 // NEW 11. Payment Types Pie Chart Data
 $stmtPayTypes = $pdo->prepare("
@@ -151,16 +207,6 @@ $stmtPayTypes->execute($params);
 $pay_types_data = $stmtPayTypes->fetchAll(PDO::FETCH_ASSOC);
 
 // ── POS Sales Stats ───────────────────────────────────────────────────────────
-$posWhere = ["1=1"];
-$posParams = [];
-if ($start_date) { $posWhere[] = "ps.sale_date >= ?"; $posParams[] = $start_date; }
-if ($end_date)   { $posWhere[] = "ps.sale_date <= ?"; $posParams[] = $end_date; }
-if ($month && $year && !$start_date && !$end_date) {
-    $posWhere[] = "MONTH(ps.sale_date) = ? AND YEAR(ps.sale_date) = ?";
-    $posParams[] = $month; $posParams[] = $year;
-}
-$posWhereClause = implode(" AND ", $posWhere);
-
 $stmtPOSRev = $pdo->prepare("SELECT COALESCE(SUM(grand_total),0) FROM pos_sales ps WHERE $posWhereClause");
 $stmtPOSRev->execute($posParams);
 $pos_revenue = (float)$stmtPOSRev->fetchColumn();
@@ -171,16 +217,74 @@ $pos_cost = (float)$stmtPOSCost->fetchColumn();
 $pos_profit = $pos_revenue - $pos_cost;
 
 // Calculate Overall Final Business Profit
-$total_business_profit = $profit + $pos_profit - $total_emp_payments;
+    
+// NEW: Other Purchases
+$opWhere = ["1=1"];
+$opParams = [];
+if ($start_date) { $opWhere[] = "purchase_date >= ?"; $opParams[] = $start_date; }
+if ($end_date)   { $opWhere[] = "purchase_date <= ?"; $opParams[] = $end_date; }
+if ($month && $year && !$start_date && !$end_date) {
+    $opWhere[] = "MONTH(purchase_date) = ? AND YEAR(purchase_date) = ?";
+    $opParams[] = $month; $opParams[] = $year;
+}
+$opWhereClause = implode(" AND ", $opWhere);
+
+$stmtOPExpenses = $pdo->prepare("SELECT COALESCE(SUM(grand_total),0) FROM other_purchases WHERE $opWhereClause");
+$stmtOPExpenses->execute($opParams);
+$total_other_purchases = (float)$stmtOPExpenses->fetchColumn();
+
+// NEW: Monthly General Expenses (Overheads)
+$oeWhere = ["1=1"];
+$oeParams = [];
+if ($start_date) { $oeWhere[] = "expense_date >= ?"; $oeParams[] = $start_date; }
+if ($end_date)   { $oeWhere[] = "expense_date <= ?"; $oeParams[] = $end_date; }
+if ($month && $year && !$start_date && !$end_date) {
+    $oeWhere[] = "MONTH(expense_date) = ? AND YEAR(expense_date) = ?";
+    $oeParams[] = $month; $oeParams[] = $year;
+}
+$oeWhereClause = implode(" AND ", $oeWhere);
+
+$stmtOEExpenses = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM monthly_expenses WHERE $oeWhereClause");
+$stmtOEExpenses->execute($oeParams);
+$total_overhead_expenses = (float)$stmtOEExpenses->fetchColumn();
+
+$total_business_profit = $profit + $pos_profit - $total_emp_payments - $total_other_purchases - $total_overhead_expenses;
+
+// ====== EXCLUSIVE CURRENT MONTH PROFIT ======
+$currM = date('m');
+$currY = date('Y');
+
+$currDelRev = (float)$pdo->query("SELECT COALESCE(SUM(dc.subtotal - dc.discount),0) FROM delivery_customers dc JOIN deliveries d ON dc.delivery_id = d.id WHERE MONTH(d.delivery_date) = $currM AND YEAR(d.delivery_date) = $currY")->fetchColumn();
+$currDelExp = (float)$pdo->query("SELECT COALESCE(SUM(de.amount),0) FROM delivery_expenses de JOIN deliveries d ON de.delivery_id = d.id WHERE MONTH(d.delivery_date) = $currM AND YEAR(d.delivery_date) = $currY")->fetchColumn();
+$currDelCost = (float)$pdo->query("SELECT COALESCE(SUM(di.qty * di.cost_price),0) FROM delivery_items di JOIN delivery_customers dc ON di.delivery_customer_id = dc.id JOIN deliveries d ON dc.delivery_id = d.id WHERE MONTH(d.delivery_date) = $currM AND YEAR(d.delivery_date) = $currY")->fetchColumn();
+$currDelProfit = $currDelRev - ($currDelExp + $currDelCost);
+
+$currPOSRev = (float)$pdo->query("SELECT COALESCE(SUM(grand_total),0) FROM pos_sales WHERE MONTH(sale_date) = $currM AND YEAR(sale_date) = $currY")->fetchColumn();
+$currPOSCost = (float)$pdo->query("SELECT COALESCE(SUM(psi.qty * psi.cost_price),0) FROM pos_sale_items psi JOIN pos_sales ps ON psi.sale_id=ps.id WHERE MONTH(ps.sale_date) = $currM AND YEAR(ps.sale_date) = $currY")->fetchColumn();
+$currPOSProfit = $currPOSRev - $currPOSCost;
+
+$currEmp = (float)$pdo->query("SELECT COALESCE(SUM(salary_amount),0) FROM employee_salary_payments WHERE salary_month = $currM AND salary_year = $currY AND status='paid'")->fetchColumn();
+$currOP = (float)$pdo->query("SELECT COALESCE(SUM(grand_total),0) FROM other_purchases WHERE MONTH(purchase_date) = $currM AND YEAR(purchase_date) = $currY")->fetchColumn();
+$currOE = (float)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM monthly_expenses WHERE MONTH(expense_date) = $currM AND YEAR(expense_date) = $currY")->fetchColumn();
+
+$currMonthProfit = $currDelProfit + $currPOSProfit - $currEmp - $currOP - $currOE;
 
 $stmtPOSItems = $pdo->prepare("
-    SELECT b.name as brand_name, SUM(psi.qty) as total_qty
+    SELECT 
+        CASE 
+            WHEN psi.item_source = 'container' THEN COALESCE(b.name, 'Unknown Brand')
+            WHEN psi.item_source = 'other' THEN COALESCE(opi.item_name, 'Other Item')
+        END as brand_name, 
+        SUM(psi.qty) as total_qty
     FROM pos_sale_items psi
-    JOIN container_items ci ON psi.container_item_id=ci.id
-    JOIN brands b ON ci.brand_id=b.id
-    JOIN pos_sales ps ON psi.sale_id=ps.id
+    LEFT JOIN container_items ci ON psi.item_source = 'container' AND psi.item_id = ci.id
+    LEFT JOIN brands b ON ci.brand_id = b.id
+    LEFT JOIN other_purchase_items opi ON psi.item_source = 'other' AND psi.item_id = opi.id
+    JOIN pos_sales ps ON psi.sale_id = ps.id
     WHERE $posWhereClause
-    GROUP BY b.name ORDER BY total_qty DESC LIMIT 10");
+    GROUP BY brand_name 
+    ORDER BY total_qty DESC 
+    LIMIT 10");
 $stmtPOSItems->execute($posParams);
 $pos_items_data = $stmtPOSItems->fetchAll(PDO::FETCH_ASSOC);
 
@@ -233,8 +337,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
     
     // Bank Details
     fputcsv($output, ['BANK DETAILS']);
-    fputcsv($output, ['Bank Name', 'Account Number', 'Total Payments Collected (LKR)']);
-    foreach ($banks_data as $b) { fputcsv($output, [$b['bank_name'], $b['account_number'], number_format($b['total_amount'], 2, '.', '')]); }
+    fputcsv($output, ['Bank Name', 'Account Number', 'Total Received (LKR)', 'Total Paid (LKR)', 'Leftover (LKR)']);
+    foreach ($banks_data as $b) { fputcsv($output, [$b['bank_name'], $b['account_number'], number_format($b['total_received'], 2, '.', ''), number_format($b['total_paid'], 2, '.', ''), number_format($b['leftover'], 2, '.', '')]); }
     fputcsv($output, []);
     
     // Delivery Most Sold Items
@@ -254,6 +358,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
     fputcsv($output, ['DELIVERY PROFIT', number_format($profit, 2, '.', '')]);
     fputcsv($output, ['POS SALES PROFIT', number_format($pos_profit, 2, '.', '')]);
     fputcsv($output, ['EMPLOYEE SALARY PAYMENTS', number_format($total_emp_payments, 2, '.', '')]);
+    fputcsv($output, ['OTHER PURCHASES/EXPENSES', number_format($total_other_purchases, 2, '.', '')]);
+    fputcsv($output, ['OVERHEAD EXPENSES (BILLS/TAX)', number_format($total_overhead_expenses, 2, '.', '')]);
     fputcsv($output, ['--------------------------', '----------']);
     fputcsv($output, ['TOTAL CONSOLIDATED BUSINESS PROFIT', number_format($total_business_profit, 2, '.', '')]);
     
@@ -350,6 +456,13 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
                 <div class="bg-indigo-600 text-white px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center space-x-3 shadow-lg shadow-indigo-600/20">
                     <i class="fa-solid fa-calendar-check text-base"></i>
                     <span class="whitespace-nowrap">REPORT GENERATED: <?php echo date('Y-M-d'); ?></span>
+                </div>
+                <div class="bg-emerald-500 text-white px-5 py-2.5 rounded-2xl text-[12px] font-black uppercase tracking-widest flex items-center justify-center space-x-3 shadow-lg shadow-emerald-500/30 ml-2">
+                    <i class="fa-solid fa-sack-dollar text-xl"></i>
+                    <div class="flex flex-col text-left leading-none">
+                        <span class="text-[8px] opacity-80 whitespace-nowrap">THIS MONTH'S PROFIT</span>
+                        <span class="whitespace-nowrap">LKR <?php echo number_format($currMonthProfit, 2); ?></span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -478,6 +591,23 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
                 <h2 class="text-3xl font-black text-amber-600 tracking-tighter">LKR <?php echo number_format($total_emp_payments, 2); ?></h2>
           
             </div>                 
+
+            <div class="glass-card p-8 bg-gradient-to-br from-rose-500/10 to-transparent border-rose-200">
+                <div class="stat-icon bg-rose-100/50 text-rose-600 mb-4">
+                    <i class="fa-solid fa-cart-shopping text-2xl"></i>
+                </div>
+                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Other Purchases / Expenses</p>
+                <h2 class="text-3xl font-black text-rose-600 tracking-tighter">LKR <?php echo number_format($total_other_purchases, 2); ?></h2>
+            </div>
+            
+            <div class="glass-card p-8 bg-gradient-to-br from-fuchsia-300/10 to-transparent border-fuchsia-200">
+                <div class="stat-icon bg-fuchsia-100/50 text-fuchsia-600 mb-4">
+                    <i class="fa-solid fa-bolt text-2xl"></i>
+                </div>
+                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Overhead Expenses (Bills)</p>
+                <h2 class="text-3xl font-black text-fuchsia-600 tracking-tighter">LKR <?php echo number_format($total_overhead_expenses, 2); ?></h2>
+            </div>
+            
             <!-- POS Sales Reports Heading -->
             <div class="col-span-full mt-4 mb-2">
                 <h2 class="text-xl font-black text-slate-900 font-['Outfit'] tracking-tight flex items-center gap-3">
@@ -505,16 +635,14 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
             </div>
 
             <!-- TOTAL BUSINESS PROFIT -->
-            <div class="glass-card p-8 bg-slate-900 border-slate-700 text-white shadow-2xl">
+            <div class="glass-card p-8 bg-slate-900 border-slate-700 text-white shadow-2xl lg:col-span-2">
                 <div class="stat-icon bg-white/10 text-white mb-4">
                     <i class="fa-solid fa-vault text-2xl"></i>
                 </div>
                 <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Business Profit</p>
                 <h2 class="text-3xl font-black text-white tracking-tighter">LKR <?php echo number_format($total_business_profit, 2); ?></h2>
-                <p class="text-[9px] text-slate-400 mt-2 font-medium italic">(Delivery + POS - Salaries)</p>
+                <p class="text-[9px] text-slate-400 mt-2 font-medium italic">(Delivery + POS - Salaries - Other Purchases - Overheads)</p>
             </div>
-
-       
         </div>
 
         <div class="mb-10">
@@ -531,34 +659,44 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
                             <tr class="text-[10px] uppercase font-black tracking-widest text-slate-600 bg-slate-100/80 rounded-xl overflow-hidden">
                                 <th class="py-3 px-5 rounded-l-xl">Bank Name</th>
                                 <th class="py-3 px-5">Account Details</th>
-                                <th class="py-3 px-5 text-right rounded-r-xl">Total Payments Collected</th>
+                                <th class="py-3 px-5 text-right">Total Received</th>
+                                <th class="py-3 px-5 text-right">Total Paid</th>
+                                <th class="py-3 px-5 text-right rounded-r-xl">Leftover</th>
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach($banks_data as $b): ?>
-                                <tr class="bg-white/40 hover:bg-indigo-50/50 transition-colors group">
-                                    <td class="py-4 px-5 rounded-l-xl border-y border-l border-transparent group-hover:border-indigo-100">
+                            <?php foreach($banks_data as $b): 
+                                $isPositive = $b['leftover'] >= 0;
+                            ?>
+                                <tr class="bg-white/40 hover:bg-slate-50 transition-colors group">
+                                    <td class="py-4 px-5 rounded-l-xl border-y border-l border-transparent group-hover:border-slate-200">
                                         <div class="flex items-center space-x-4">
-                                            <div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 border border-indigo-100 shadow-sm group-hover:bg-indigo-600 group-hover:text-white transition-all">
+                                            <div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 border border-indigo-100 shadow-sm transition-all">
                                                 <i class="fa-solid fa-building-columns text-sm"></i>
                                             </div>
                                             <span class="text-xs font-black text-slate-700 uppercase tracking-tight"><?php echo htmlspecialchars($b['bank_name']); ?></span>
                                         </div>
                                     </td>
-                                    <td class="py-4 px-5 border-y border-transparent group-hover:border-indigo-100">
-                                        <span class="text-xs font-black text-slate-500 uppercase tracking-[0.1em]"><?php echo htmlspecialchars($b['account_number']); ?></span>
+                                    <td class="py-4 px-5 border-y border-transparent group-hover:border-slate-200">
+                                        <span class="text-[10px] font-black text-slate-500 uppercase tracking-widest bg-slate-100 px-2 py-1 rounded-md">ACC: <?php echo htmlspecialchars($b['account_number']); ?></span>
                                     </td>
-                                    <td class="py-4 px-5 text-right rounded-r-xl border-y border-r border-transparent group-hover:border-indigo-100">
-                                        <span class="text-sm font-black text-slate-900">LKR <?php echo number_format($b['total_amount'], 2); ?></span>
+                                    <td class="py-4 px-5 text-right border-y border-transparent group-hover:border-slate-200">
+                                        <span class="text-xs font-black text-emerald-600">LKR <?php echo number_format($b['total_received'], 2); ?></span>
+                                    </td>
+                                    <td class="py-4 px-5 text-right border-y border-transparent group-hover:border-slate-200">
+                                        <span class="text-xs font-black text-amber-600">LKR <?php echo number_format($b['total_paid'], 2); ?></span>
+                                    </td>
+                                    <td class="py-4 px-5 text-right rounded-r-xl border-y border-r border-transparent group-hover:border-slate-200">
+                                        <span class="text-sm font-black <?php echo $isPositive ? 'text-slate-900' : 'text-rose-600'; ?>">LKR <?php echo number_format($b['leftover'], 2); ?></span>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
                             <?php if (empty($banks_data)): ?>
                                 <tr>
-                                    <td colspan="3" class="py-12 text-center text-slate-400 font-bold text-[10px] uppercase tracking-widest italic bg-white/20 rounded-2xl">
+                                    <td colspan="5" class="py-12 text-center text-slate-400 font-bold text-[10px] uppercase tracking-widest italic bg-white/20 rounded-2xl">
                                         <div class="flex flex-col items-center gap-2">
                                             <i class="fa-solid fa-folder-open text-2xl opacity-20"></i>
-                                            No bank payment collections found.
+                                            No bank payment activity found.
                                         </div>
                                     </td>
                                 </tr>

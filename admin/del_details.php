@@ -150,12 +150,17 @@ if ($action) {
             $pdo->beginTransaction();
             try {
                 // Return items to stock
-                $itemsStmt = $pdo->prepare("SELECT container_item_id, qty FROM delivery_items WHERE delivery_customer_id = ?");
+                $itemsStmt = $pdo->prepare("SELECT item_id, item_source, qty FROM delivery_items WHERE delivery_customer_id = ?");
                 $itemsStmt->execute([$dc_id]);
                 $items = $itemsStmt->fetchAll();
                 foreach ($items as $it) {
-                    $pdo->prepare("UPDATE container_items SET sold_qty = GREATEST(0, sold_qty - ?) WHERE id = ?")
-                        ->execute([$it['qty'], $it['container_item_id']]);
+                    if ($it['item_source'] === 'container') {
+                        $pdo->prepare("UPDATE container_items SET sold_qty = GREATEST(0, sold_qty - ?) WHERE id = ?")
+                            ->execute([$it['qty'], $it['item_id']]);
+                    } else {
+                        $pdo->prepare("UPDATE other_purchases SET sold_qty = GREATEST(0, sold_qty - ?) WHERE id = ?")
+                            ->execute([$it['qty'], $it['item_id']]);
+                    }
                 }
                 
                 // Delete related records
@@ -195,7 +200,23 @@ $stmt->execute([$id]);
 $customers = $stmt->fetchAll();
 
 foreach ($customers as &$c) {
-    $stmt = $pdo->prepare("SELECT di.*, b.name as brand_name, ci.container_id, con.container_number FROM delivery_items di JOIN container_items ci ON di.container_item_id = ci.id JOIN brands b ON ci.brand_id = b.id JOIN containers con ON ci.container_id = con.id WHERE di.delivery_customer_id = ?");
+    $stmt = $pdo->prepare("
+        SELECT di.*, 
+        CASE 
+            WHEN di.item_source = 'container' THEN b.name 
+            ELSE op.item_name 
+        END as brand_name,
+        CASE 
+            WHEN di.item_source = 'container' THEN con.container_number 
+            ELSE op.purchase_number 
+        END as container_number 
+        FROM delivery_items di 
+        LEFT JOIN container_items ci ON di.item_id = ci.id AND di.item_source = 'container'
+        LEFT JOIN brands b ON ci.brand_id = b.id 
+        LEFT JOIN containers con ON ci.container_id = con.id 
+        LEFT JOIN other_purchases op ON di.item_id = op.id AND di.item_source = 'other'
+        WHERE di.delivery_customer_id = ?
+    ");
     $stmt->execute([$c['id']]);
     $c['items'] = $stmt->fetchAll();
 
