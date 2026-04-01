@@ -211,13 +211,13 @@ function formatCurrency($amount) {
 <body class="flex flex-col">
 
     <header class="glass-header sticky top-0 z-40 py-4">
-        <div class="max-w-7xl mx-auto px-6 flex items-center justify-between">
-            <div class="flex items-center space-x-5">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div class="flex items-center space-x-5 self-start sm:self-auto">
                 <a href="dashboard.php" class="text-slate-800 hover:text-cyan-600 transition-colors p-2.5 rounded-2xl hover:bg-slate-100 flex items-center justify-center">
                     <i class="fa-solid fa-arrow-left text-xl"></i>
                 </a>
                 <div>
-                    <h1 class="text-2xl font-black text-slate-900 font-['Outfit'] tracking-tight">Payment History</h1>
+                    <h1 class="text-xl sm:text-2xl font-black text-slate-900 font-['Outfit'] tracking-tight">Payment History</h1>
                     <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-0.5">Comprehensive Financial Logs</p>
                 </div>
             </div>
@@ -261,8 +261,8 @@ function formatCurrency($amount) {
         </div>
 
         <div class="glass-card overflow-hidden">
-            <div class="overflow-x-auto">
-                <table class="w-full text-left">
+            <div class="overflow-x-auto no-scrollbar">
+                <table class="w-full text-left min-w-[900px]">
                     <thead>
                         <tr class="table-header">
                             <th class="px-6 py-5 font-bold">Date</th>

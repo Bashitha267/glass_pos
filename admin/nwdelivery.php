@@ -587,13 +587,13 @@ $deliveries = $stmt->fetchAll();
 <body class="flex flex-col">
 
     <header class="glass-header sticky top-0 z-40 py-4">
-        <div class="px-3 md:px-6 flex items-center justify-between">
-            <div class="flex items-center space-x-3 md:space-x-5">
+        <div class="px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div class="flex items-center space-x-3 md:space-x-5 self-start sm:self-auto">
                 <a href="dashboard.php" class="text-slate-800 hover:text-cyan-600 transition-colors p-2 md:p-2.5 rounded-2xl hover:bg-slate-100">
                     <i class="fa-solid fa-arrow-left text-lg md:text-xl"></i>
                 </a>
                 <div>
-                    <h1 class="text-xl md:text-2xl font-black text-slate-900 font-['Outfit'] tracking-tight">Deliveries</h1>
+                    <h1 class="text-lg md:text-2xl font-black text-slate-900 font-['Outfit'] tracking-tight">Deliveries</h1>
                     <p class="hidden md:block text-[10px] uppercase font-black text-slate-400 tracking-widest mt-0.5">Delivery & Logistics Tracker</p>
                 </div>
             </div>
@@ -643,8 +643,8 @@ $deliveries = $stmt->fetchAll();
 
         <!-- Data Table -->
         <div class="glass-card overflow-hidden">
-            <div class="overflow-x-auto">
-                <table class="w-full text-left">
+            <div class="overflow-x-auto no-scrollbar">
+                <table class="w-full text-left min-w-[1000px]">
                     <thead>
                         <tr class="table-header">
                             <th class="px-5 py-3.5">DELIVERY ID</th>

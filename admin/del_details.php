@@ -372,13 +372,13 @@ $pending_payment = $total_revenue - $total_paid;
 <body class="flex flex-col pb-20">
 
     <header class="glass-header sticky top-0 z-40 py-4 no-print">
-        <div class="px-3 md:px-8 flex items-center justify-between">
-            <div class="flex items-center space-x-3 md:space-x-5">
+        <div class="px-4 sm:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div class="flex items-center space-x-3 md:space-x-5 self-start sm:self-auto">
                 <a href="nwdelivery.php" class="text-slate-800 hover:text-cyan-600 transition-colors p-2 md:p-2.5 rounded-2xl hover:bg-slate-100">
                     <i class="fa-solid fa-arrow-left text-lg md:text-xl"></i>
                 </a>
                 <div>
-                    <h1 class="text-xl md:text-2xl font-black text-slate-900 font-['Outfit'] tracking-tight">Delivery Registry</h1>
+                    <h1 class="text-lg md:text-2xl font-black text-slate-900 font-['Outfit'] tracking-tight">Delivery Registry</h1>
                     <p class="text-[9px] md:text-[10px] uppercase font-black text-slate-500 tracking-widest mt-0.5">Trip Details #<?php echo str_pad($id, 4, '0', STR_PAD_LEFT); ?></p>
                 </div>
             </div>
@@ -496,7 +496,8 @@ $pending_payment = $total_revenue - $total_paid;
                             <h4 class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Product Details</h4>
                             <button onclick="uploadBill(<?php echo $c['id']; ?>)" class="text-[8px] bg-slate-100 text-slate-600 px-3 py-1.5 rounded-lg font-black uppercase tracking-widest">Change Digital Bill</button>
                         </div>
-                        <table class="w-full text-sm print-table border-separate border-spacing-y-1">
+                        <div class="overflow-x-auto no-scrollbar">
+                            <table class="w-full text-sm print-table border-separate border-spacing-y-1 min-w-[700px]">
                             <thead>
                                 <tr class="text-[10px] uppercase font-black text-slate-600 bg-slate-100/80 rounded-xl overflow-hidden print-pure-black">
                                     <th class="py-3 px-4 rounded-l-xl">Brand / Product</th>
@@ -521,7 +522,8 @@ $pending_payment = $total_revenue - $total_paid;
                                 </tr>
                                 <?php endforeach; ?>
                             </tbody>
-                        </table>
+                            </table>
+                        </div>
                     </div>
 
                     <!-- Payments & Discount Row -->

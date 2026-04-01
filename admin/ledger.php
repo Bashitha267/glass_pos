@@ -188,17 +188,17 @@ $ledger = $stmt->fetchAll();
 
     <!-- Header -->
     <header class="glass-header sticky top-0 z-40 py-4">
-        <div class="max-w-7xl mx-auto px-6 flex items-center justify-between">
-            <div class="flex items-center space-x-4">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div class="flex items-center space-x-4 self-start sm:self-auto">
                 <a href="dashboard.php" class="text-slate-800 hover:text-cyan-600 transition-colors p-2 rounded-xl hover:bg-slate-100">
                     <i class="fa-solid fa-arrow-left text-xl"></i>
                 </a>
                 <div>
-                    <h1 class="text-2xl font-bold tracking-tight text-slate-800 font-['Outfit']">Container Ledger</h1>
+                    <h1 class="text-xl sm:text-2xl font-bold tracking-tight text-slate-800 font-['Outfit']">Container Ledger</h1>
                     <p class="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Audit Trail of System Changes</p>
                 </div>
             </div>
-            <div class="hidden md:block">
+            <div class="hidden sm:block">
                 <div class="text-right">
                     <p class="text-xs font-bold text-slate-800"><?php echo date('l, F jS'); ?></p>
                     <p class="text-[10px] text-cyan-600 uppercase font-black tracking-widest">Live Monitoring</p>
@@ -236,8 +236,8 @@ $ledger = $stmt->fetchAll();
         </div>
 
         <div class="glass-card overflow-hidden">
-            <div class="overflow-x-auto">
-                <table class="w-full text-left">
+            <div class="overflow-x-auto no-scrollbar">
+                <table class="w-full text-left min-w-[1000px]">
                     <thead>
                         <tr class="table-header">
                             <th class="px-6 py-5 font-bold">Timestamp</th>
