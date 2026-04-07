@@ -125,9 +125,9 @@ if ($action == 'search_buyer') {
 
 if ($action == 'search_bank') {
     $term = '%' . $_GET['term'] . '%';
-    $stmt = $pdo->prepare("SELECT name FROM banks WHERE name LIKE ? LIMIT 5");
+    $stmt = $pdo->prepare("SELECT name, account_number FROM banks WHERE name LIKE ? LIMIT 5");
     $stmt->execute([$term]);
-    echo json_encode($stmt->fetchAll(PDO::FETCH_COLUMN));
+    echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
     exit;
 }
 
@@ -184,36 +184,12 @@ if ($action == 'save_purchase') {
             $pdo->prepare("INSERT INTO other_purchase_items (purchase_id, item_name, category, qty, square_feet, price_per_item, line_total) VALUES (?, ?, ?, ?, ?, ?, ?)")->execute([$purchase_id, $it['name'], $category, $qty, $sqft, $price, $lineTotal]);
         }
 
-        // Expenses (already handled correctly by name/amount)
+        // Expenses
         $pdo->prepare("DELETE FROM other_purchase_expenses WHERE purchase_id = ?")->execute([$purchase_id]);
         foreach ($expenses as $ex) {
             if (empty($ex['name']) || (float) $ex['amount'] <= 0)
                 continue;
             $pdo->prepare("INSERT INTO other_purchase_expenses (purchase_id, expense_name, amount) VALUES (?, ?, ?)")->execute([$purchase_id, $ex['name'], (float) $ex['amount']]);
-        }
-
-        // Payments
-        $pdo->prepare("DELETE FROM other_purchase_payments WHERE purchase_id = ?")->execute([$purchase_id]);
-        foreach ($payments as $py) {
-            $amt = (float) $py['amount'];
-            if ($amt <= 0)
-                continue;
-
-            $method = $py['method'] ?? 'Cash';
-            $bank = $py['bank_name'] ?? '';
-            $chq = $py['cheque_number'] ?? '';
-            $payer = $py['payer_name'] ?? '';
-            $desc = $py['description'] ?? '';
-
-            $pdo->prepare("INSERT INTO other_purchase_payments (purchase_id, amount, bank_name, cheque_number, payer_name, method, description) VALUES (?, ?, ?, ?, ?, ?, ?)")->execute([$purchase_id, $amt, $bank, $chq, $payer, $method, $desc]);
-        }
-
-        // Expenses
-        $pdo->prepare("DELETE FROM other_purchase_expenses WHERE purchase_id = ?")->execute([$purchase_id]);
-        foreach ($expenses as $exp) {
-            if (empty($exp['name']) || $exp['amount'] <= 0)
-                continue;
-            $pdo->prepare("INSERT INTO other_purchase_expenses (purchase_id, expense_name, amount) VALUES (?, ?, ?)")->execute([$purchase_id, $exp['name'], $exp['amount']]);
         }
 
         // Payments
@@ -2011,14 +1987,14 @@ if ($current_tab === 'other') {
 
         function suggestBanks(input) {
             const val = input.value;
-            // Create suggestion box if not exists
             let resBox = input.parentNode.querySelector('.bank-suggestions');
             if (!resBox) {
                 resBox = document.createElement('div');
                 resBox.className = 'bank-suggestions absolute left-0 top-full mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-xl hidden z-[100] max-h-40 overflow-y-auto';
-                input.parentNode.style.position = 'relative';
                 input.parentNode.appendChild(resBox);
             }
+            // Always ensure parent is relative for proper absolute positioning
+            input.parentNode.style.position = 'relative';
 
             if (val.length < 1) { resBox.classList.add('hidden'); return; }
 
@@ -2029,14 +2005,22 @@ if ($current_tab === 'other') {
                     if (data.length > 0) {
                         data.forEach(b => {
                             const div = document.createElement('div');
-                            div.className = 'px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm font-medium border-b border-slate-50 last:border-0 text-purple-900';
-                            div.innerHTML = `<p class="text-xs font-black text-slate-800 uppercase">${b.name}</p><p class="text-[9px] font-bold text-slate-400">ACC: ${b.account_number || 'N/A'}</p>`;
-                            div.onclick = () => { input.value = b.name; resBox.classList.add('hidden'); };
+                            div.className = 'px-4 py-3 hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-0 group/item';
+                            div.innerHTML = `
+                                <div class="flex items-center justify-between">
+                                    <span class="text-sm font-black text-slate-800 uppercase group-hover/item:text-indigo-600 transition-colors">${b.name}</span>
+                                    <span class="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full uppercase">ACC: ${b.account_number || 'N/A'}</span>
+                                </div>
+                            `;
+                            div.onclick = () => { 
+                                input.value = b.name; 
+                                resBox.classList.add('hidden'); 
+                            };
                             resBox.appendChild(div);
                         });
                         resBox.classList.remove('hidden');
                     } else {
-                        resBox.innerHTML = `<div class="p-3 text-center"><p class="text-[9px] font-black text-slate-400 uppercase mb-2">Not found</p><button type="button" onclick="openOpCreateBankModal('${val.replace(/'/g, "\\'")}')" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-xl text-[10px] font-black uppercase">Create New</button></div>`;
+                        resBox.innerHTML = `<div class="p-3 text-center bg-slate-50/50"><p class="text-[10px] font-black text-slate-400 uppercase mb-2 italic">Bank not in records</p><button type="button" onclick="openOpCreateBankModal('${val.replace(/'/g, "\\'")}')" class="w-full bg-slate-900 hover:bg-black text-white py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-lg active:scale-95">Add New Bank</button></div>`;
                         resBox.classList.remove('hidden');
                     }
                 });

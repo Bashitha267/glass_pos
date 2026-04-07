@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Mar 29, 2026 at 11:03 AM
+-- Generation Time: Apr 07, 2026 at 05:46 PM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.0.30
 
@@ -91,6 +91,7 @@ CREATE TABLE `container_items` (
   `brand_id` int(11) NOT NULL,
   `pallets` int(11) NOT NULL,
   `qty_per_pallet` int(11) NOT NULL,
+  `square_feet` double DEFAULT 0,
   `total_qty` int(11) NOT NULL,
   `sold_qty` int(11) DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -331,6 +332,7 @@ CREATE TABLE `employee_salary_settings` (
   `id` int(11) NOT NULL,
   `user_id` int(11) NOT NULL,
   `monthly_salary` decimal(15,2) NOT NULL DEFAULT 0.00,
+  `payment_frequency` enum('monthly','weekly') DEFAULT 'monthly',
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -391,7 +393,9 @@ CREATE TABLE `other_purchase_items` (
   `id` int(11) NOT NULL,
   `purchase_id` int(11) NOT NULL,
   `item_name` varchar(100) NOT NULL,
-  `qty` int(11) NOT NULL,
+  `category` enum('Glass','Other') DEFAULT 'Other',
+  `qty` double DEFAULT 0,
+  `square_feet` double DEFAULT 0,
   `sold_qty` int(11) DEFAULT 0,
   `price_per_item` decimal(15,2) NOT NULL,
   `line_total` decimal(15,2) NOT NULL
@@ -407,9 +411,11 @@ CREATE TABLE `other_purchase_payments` (
   `id` int(11) NOT NULL,
   `purchase_id` int(11) NOT NULL,
   `amount` decimal(15,2) NOT NULL,
-  `payment_type` enum('Cash','Account Transfer','Cheque','Card') NOT NULL,
+  `bank_name` varchar(255) DEFAULT NULL,
+  `payment_type` enum('Cash','Account Transfer','Cheque','Card') DEFAULT NULL,
   `bank_id` int(11) DEFAULT NULL,
   `cheque_number` varchar(50) DEFAULT NULL,
+  `payer_name` varchar(255) DEFAULT NULL,
   `proof_image` varchar(255) DEFAULT NULL,
   `payment_date` date NOT NULL,
   `cheque_payer_name` varchar(255) DEFAULT NULL,
@@ -526,7 +532,8 @@ INSERT INTO `users` (`id`, `username`, `password`, `role`, `full_name`, `contact
 (1, 'admin', '$2y$12$vAAF0zK96l/T5JDQgqSoBuPIFc5AYEL7tWkS9Q7u1jhAObDIyEd2a', 'admin', 'System Administrator', '0712345678', NULL, NULL, NULL, '2026-03-13 14:20:18'),
 (5, NULL, NULL, 'employee', 'nimesh', '1234555', NULL, NULL, NULL, '2026-03-21 16:16:13'),
 (6, NULL, NULL, 'employee', 'sugath', '122', NULL, NULL, NULL, '2026-03-21 16:25:12'),
-(7, NULL, NULL, 'employee', 'kamal', '122222', NULL, NULL, NULL, '2026-03-23 14:54:10');
+(7, NULL, NULL, 'employee', 'kamal', '122222', NULL, NULL, NULL, '2026-03-23 14:54:10'),
+(8, NULL, NULL, 'employee', 'kumar', '2222', NULL, NULL, NULL, '2026-03-29 09:15:25');
 
 --
 -- Indexes for dumped tables
@@ -938,7 +945,7 @@ ALTER TABLE `pos_sale_payments`
 -- AUTO_INCREMENT for table `users`
 --
 ALTER TABLE `users`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=8;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=9;
 
 --
 -- Constraints for dumped tables

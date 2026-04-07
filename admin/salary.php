@@ -126,6 +126,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 		$full_name = trim($_POST['full_name'] ?? '');
 		$contact_number = trim($_POST['contact_number'] ?? '');
 		$monthly_salary = (float)($_POST['monthly_salary'] ?? 0);
+		$payment_frequency = $_POST['payment_frequency'] ?? 'monthly';
 
 		if (empty($full_name)) {
 			$salary_error = 'Employee name is required.';
@@ -138,10 +139,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 				$stmt->execute([$username, $password, $full_name, $contact_number]);
 				$new_user_id = $pdo->lastInsertId();
 
-				if ($monthly_salary > 0) {
-					$stmtSal = $pdo->prepare("INSERT INTO employee_salary_settings (user_id, monthly_salary) VALUES (?, ?)");
-					$stmtSal->execute([$new_user_id, $monthly_salary]);
-				}
+				$stmtSal = $pdo->prepare("INSERT INTO employee_salary_settings (user_id, monthly_salary, payment_frequency) VALUES (?, ?, ?)
+                    ON DUPLICATE KEY UPDATE monthly_salary = VALUES(monthly_salary), payment_frequency = VALUES(payment_frequency)");
+				$stmtSal->execute([$new_user_id, $monthly_salary, $payment_frequency]);
 				$pdo->commit();
 				$salary_success = "Staff member '$full_name' added successfully. (Username: $username, Default Password: password123)";
 			} catch (Exception $e) {
@@ -158,6 +158,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 		if ($employee_id > 0) {
 			$settingStmt = $pdo->prepare("INSERT INTO employee_salary_settings (user_id, monthly_salary) VALUES (?, ?) ON DUPLICATE KEY UPDATE monthly_salary = VALUES(monthly_salary)");
 			$settingStmt->execute([$employee_id, $new_salary]);
+			echo json_encode(['success' => true]);
+		} else {
+			echo json_encode(['success' => false, 'error' => 'Invalid ID']);
+		}
+		exit;
+	}
+
+    if ($salary_action === 'update_frequency') {
+		header('Content-Type: application/json');
+		$employee_id = (int)($_POST['employee_id'] ?? 0);
+		$frequency = $_POST['frequency'] ?? 'monthly';
+		if ($employee_id > 0) {
+			$settingStmt = $pdo->prepare("INSERT INTO employee_salary_settings (user_id, payment_frequency) VALUES (?, ?) ON DUPLICATE KEY UPDATE payment_frequency = VALUES(payment_frequency)");
+			$settingStmt->execute([$employee_id, $frequency]);
 			echo json_encode(['success' => true]);
 		} else {
 			echo json_encode(['success' => false, 'error' => 'Invalid ID']);
@@ -182,6 +196,7 @@ $staffStmt = $pdo->prepare("SELECT
 		u.full_name,
 		u.contact_number,
 		COALESCE(ss.monthly_salary, 0) AS monthly_salary,
+        COALESCE(ss.payment_frequency, 'monthly') AS payment_frequency,
 		(
 			SELECT COUNT(DISTINCT de.delivery_id)
 			FROM delivery_employees de
@@ -232,6 +247,7 @@ foreach ($staff_raw as $staff) {
 		'contact_number' => $staff['contact_number'],
 		'delivery_count' => (int)$staff['delivery_count'],
 		'monthly_salary' => (float)$staff['monthly_salary'],
+        'payment_frequency' => $staff['payment_frequency'],
 		'payment_id' => $payment['id'] ?? null,
 		'payment_date' => $payment['payment_date'] ?? null,
 		'status' => $status,
@@ -385,7 +401,8 @@ foreach ($staff_raw as $staff) {
 							<th class="text-left px-4 py-3">Name</th>
 							<th class="text-left px-4 py-3">Contact Number</th>
 							<th class="text-left px-4 py-3">Deliveries</th>
-							<th class="text-left px-4 py-3">Salary (Monthly)</th>
+							<th class="text-left px-4 py-3">Pay Cycle</th>
+							<th class="text-left px-4 py-3">Salary (Rate)</th>
 							<th class="text-left px-4 py-3">Paid Date</th>
 							<th class="text-left px-4 py-3">Payment Status</th>
 							<th class="text-left px-4 py-3">Actions</th>
@@ -397,6 +414,12 @@ foreach ($staff_raw as $staff) {
 								<td class="px-4 py-3 font-bold text-slate-900"><?php echo htmlspecialchars($row['full_name']); ?></td>
 								<td class="px-4 py-3 font-semibold text-slate-700"><?php echo htmlspecialchars($row['contact_number'] ?: '-'); ?></td>
 								<td class="px-4 py-3 font-semibold text-slate-700"><?php echo (int)$row['delivery_count']; ?></td>
+								<td class="px-4 py-3 capitalize">
+                                    <select onchange="updateFrequency(<?php echo (int)$row['id']; ?>, this.value, this)" class="bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border-none outline-none cursor-pointer focus:ring-2 focus:ring-indigo-500">
+                                        <option value="monthly" <?php echo $row['payment_frequency'] === 'monthly' ? 'selected' : ''; ?>>Monthly</option>
+                                        <option value="weekly" <?php echo $row['payment_frequency'] === 'weekly' ? 'selected' : ''; ?>>Weekly</option>
+                                    </select>
+                                </td>
 								<td class="px-4 py-3 font-black text-slate-900 group">
 									<div class="flex items-center space-x-2 bg-slate-50/50 hover:bg-white border-b-2 border-transparent hover:border-slate-300 focus-within:border-indigo-500 rounded-t-lg px-2 transition-colors">
 										<span class="text-xs text-slate-400">LKR</span>
@@ -548,8 +571,15 @@ foreach ($staff_raw as $staff) {
 						<input type="text" name="contact_number" class="w-full input-glass" placeholder="07XXXXXXXX">
 					</div>
 					<div>
-						<label class="text-[10px] uppercase font-black text-slate-400 mb-2 ml-1 block tracking-widest">Initial Monthly Salary (LKR)</label>
+						<label class="text-[10px] uppercase font-black text-slate-400 mb-2 ml-1 block tracking-widest">Initial Salary Rate (LKR)</label>
 						<input type="number" min="0" step="0.01" name="monthly_salary" class="w-full input-glass" value="0">
+					</div>
+					<div>
+						<label class="text-[10px] uppercase font-black text-slate-400 mb-2 ml-1 block tracking-widest">Payment Cycle</label>
+						<select name="payment_frequency" class="w-full input-glass">
+							<option value="monthly">Monthly Payment</option>
+							<option value="weekly">Weekly Payment</option>
+						</select>
 					</div>
 					<div class="pt-2">
                         <button type="submit" class="w-full h-11 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-black uppercase tracking-widest transition-colors shadow-md text-center">Save Staff</button>
@@ -561,6 +591,36 @@ foreach ($staff_raw as $staff) {
 	</main>
 
 	<script>
+        function updateFrequency(employeeId, frequency, selectElement) {
+            const originalColor = selectElement.style.color;
+            selectElement.style.opacity = '0.5';
+
+            fetch('salary.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                    'salary_action': 'update_frequency',
+                    'employee_id': employeeId,
+                    'frequency': frequency
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                selectElement.style.opacity = '1';
+                if(data.success) {
+                    // Success visual feedback
+                    selectElement.classList.add('ring-2', 'ring-emerald-500');
+                    setTimeout(() => selectElement.classList.remove('ring-2', 'ring-emerald-500'), 1500);
+                } else {
+                    alert('Error saving frequency');
+                }
+            })
+            .catch(err => {
+                console.error(err);
+                selectElement.style.opacity = '1';
+            });
+        }
+
         function updateSalary(employeeId, newSalary, inputElement) {
             newSalary = parseFloat(newSalary) || 0;
             const originalColor = inputElement.style.color;

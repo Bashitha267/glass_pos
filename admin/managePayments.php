@@ -221,7 +221,13 @@ if ($tab === 'received') {
     $pendingBalanceQuery = "SELECT SUM(op.grand_total - (SELECT COALESCE(SUM(amount), 0) FROM other_purchase_payments WHERE purchase_id = op.id)) as pending_total FROM other_purchases op WHERE $whereClause";
     $pendingStmt = $pdo->prepare($pendingBalanceQuery); $pendingStmt->execute($params); $pending_total = $pendingStmt->fetchColumn();
 
-    $query = "SELECT op.id, op.buyer_name as customer_name, op.purchase_date as date_field, op.bill_number as ref_number, op.purchase_number as display_id, op.grand_total as total_amount, (SELECT COALESCE(SUM(amount), 0) FROM other_purchase_payments WHERE purchase_id = op.id) as total_paid FROM other_purchases op WHERE $whereClause ORDER BY op.purchase_date DESC";
+    $query = "SELECT op.id, op.buyer_name as customer_name, 
+                     GREATEST(op.purchase_date, COALESCE((SELECT MAX(payment_date) FROM other_purchase_payments WHERE purchase_id = op.id), '0000-00-00')) as date_field, 
+                     op.bill_number as ref_number, op.purchase_number as display_id, op.grand_total as total_amount, 
+                     (SELECT COALESCE(SUM(amount), 0) FROM other_purchase_payments WHERE purchase_id = op.id) as total_paid 
+              FROM other_purchases op 
+              WHERE $whereClause 
+              ORDER BY date_field DESC";
     $stmt = $pdo->prepare($query); $stmt->execute($params); $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
