@@ -174,12 +174,38 @@ if ($action == 'save_purchase') {
         // Items
         $pdo->prepare("DELETE FROM other_purchase_items WHERE purchase_id = ?")->execute([$purchase_id]);
         foreach ($items as $it) {
-            $qty = (int) $it['qty'];
+            $qty = (float) $it['qty'];
+            $sqft = (float) $it['sqft'];
             $price = (float) $it['price'];
+            $category = $it['category'] ?? 'Other';
             $lineTotal = $qty * $price;
             if (empty($it['name']) || $qty <= 0)
                 continue;
-            $pdo->prepare("INSERT INTO other_purchase_items (purchase_id, item_name, qty, price_per_item, line_total) VALUES (?, ?, ?, ?, ?)")->execute([$purchase_id, $it['name'], $qty, $price, $lineTotal]);
+            $pdo->prepare("INSERT INTO other_purchase_items (purchase_id, item_name, category, qty, square_feet, price_per_item, line_total) VALUES (?, ?, ?, ?, ?, ?, ?)")->execute([$purchase_id, $it['name'], $category, $qty, $sqft, $price, $lineTotal]);
+        }
+
+        // Expenses (already handled correctly by name/amount)
+        $pdo->prepare("DELETE FROM other_purchase_expenses WHERE purchase_id = ?")->execute([$purchase_id]);
+        foreach ($expenses as $ex) {
+            if (empty($ex['name']) || (float) $ex['amount'] <= 0)
+                continue;
+            $pdo->prepare("INSERT INTO other_purchase_expenses (purchase_id, expense_name, amount) VALUES (?, ?, ?)")->execute([$purchase_id, $ex['name'], (float) $ex['amount']]);
+        }
+
+        // Payments
+        $pdo->prepare("DELETE FROM other_purchase_payments WHERE purchase_id = ?")->execute([$purchase_id]);
+        foreach ($payments as $py) {
+            $amt = (float) $py['amount'];
+            if ($amt <= 0)
+                continue;
+
+            $method = $py['method'] ?? 'Cash';
+            $bank = $py['bank_name'] ?? '';
+            $chq = $py['cheque_number'] ?? '';
+            $payer = $py['payer_name'] ?? '';
+            $desc = $py['description'] ?? '';
+
+            $pdo->prepare("INSERT INTO other_purchase_payments (purchase_id, amount, bank_name, cheque_number, payer_name, method, description) VALUES (?, ?, ?, ?, ?, ?, ?)")->execute([$purchase_id, $amt, $bank, $chq, $payer, $method, $desc]);
         }
 
         // Expenses
@@ -276,12 +302,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $total_expenses = $other_expenses + $container_cost;
 
         $total_qty = 0;
+        $total_sqft = 0;
         foreach ($items as $item) {
-            $total_qty += (int) $item['pallets'] * (int) $item['qty_per_pallet'];
+            $qty = (int) $item['pallets'] * (int) $item['qty_per_pallet'];
+            $total_qty += $qty;
+            $total_sqft += $qty * (float) ($item['square_feet'] ?? 0);
         }
 
         $net_qty = $total_qty - $damaged_qty;
-        $per_item_cost = ($net_qty > 0) ? ($total_expenses / $net_qty) : 0;
+        
+        // Use total square feet for unit cost if provided, otherwise fallback to net_qty
+        if ($total_sqft > 0) {
+            $avg_sqft = $total_qty > 0 ? ($total_sqft / $total_qty) : 0;
+            $net_sqft = $total_sqft - ($damaged_qty * $avg_sqft);
+            $per_item_cost = ($net_sqft > 0) ? ($total_expenses / $net_sqft) : 0;
+        } else {
+            $per_item_cost = ($net_qty > 0) ? ($total_expenses / $net_qty) : 0;
+        }
 
         // 2. Fetch Old Data for Ledger if exists (Include all columns to be compared)
         $stmt = $pdo->prepare("SELECT id, damaged_qty, total_expenses, country, total_qty, container_cost FROM containers WHERE container_number = ?");
@@ -363,10 +400,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
 
             $pallets = (int) $item['pallets'];
             $qty_per_pallet = (int) $item['qty_per_pallet'];
+            $square_feet = (float) ($item['square_feet'] ?? 0);
             $line_total = $pallets * $qty_per_pallet;
 
-            $stmt = $pdo->prepare("INSERT INTO container_items (container_id, brand_id, pallets, qty_per_pallet, total_qty) VALUES (?, ?, ?, ?, ?)");
-            $stmt->execute([$container_id, $brand_id, $pallets, $qty_per_pallet, $line_total]);
+            $stmt = $pdo->prepare("INSERT INTO container_items (container_id, brand_id, pallets, qty_per_pallet, square_feet, total_qty) VALUES (?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$container_id, $brand_id, $pallets, $qty_per_pallet, $square_feet, $line_total]);
         }
 
         // 4. Handle Expenses
@@ -748,7 +786,7 @@ if ($current_tab === 'other') {
                                 <th class="px-3 py-4 font-black">Total Qty</th>
                                 <th class="px-3 py-4 font-black">Avl Qty</th>
                                 <th class="px-3 py-4 font-black text-amber-400">Damaged</th>
-                                <th class="px-3 py-4 font-black text-emerald-400 whitespace-nowrap">Item Per Cost</th>
+                                <th class="px-3 py-4 font-black text-emerald-400 whitespace-nowrap">Cost Per Sqft</th>
                                 <th class="px-3 py-4 font-black whitespace-nowrap text-slate-100">Total Expenses</th>
                                 <th class="px-3 py-4 font-black text-emerald-400 whitespace-nowrap">Total Paid</th>
                                 <th class="px-3 py-4 font-black text-rose-400 whitespace-nowrap">Remain</th>
@@ -933,7 +971,7 @@ if ($current_tab === 'other') {
     <div id="modal-container"
         class="fixed inset-0 bg-black/40 backdrop-blur-[3px] z-50 flex items-center justify-center p-2 sm:p-4 hidden">
         <div
-            class="container-modal w-full max-w-4xl max-h-[95vh] overflow-y-auto rounded-[20px] sm:rounded-[30px] shadow-2xl">
+            class="container-modal w-full max-w-6xl max-h-[95vh] overflow-y-auto rounded-[20px] sm:rounded-[30px] shadow-2xl">
             <div class="p-4 sm:p-8">
                 <div class="flex items-center justify-between mb-6 sm:mb-8">
                     <div>
@@ -979,13 +1017,14 @@ if ($current_tab === 'other') {
                                 Add Item</button>
                         </div>
                         <div id="items-list-header"
-                            class="hidden lg:grid grid-cols-5 gap-3 px-4 py-2 mb-2 bg-slate-100 rounded-lg border border-slate-200">
+                            class="hidden lg:grid grid-cols-6 gap-3 px-4 py-2 mb-2 bg-slate-100 rounded-lg border border-slate-200">
                             <span
                                 class="text-[10px] uppercase font-bold text-slate-600 tracking-widest col-span-2">Brand
                                 Name</span>
                             <span class="text-[10px] uppercase font-bold text-slate-600 tracking-widest">Pallets</span>
                             <span class="text-[10px] uppercase font-bold text-slate-600 tracking-widest">Qty /
                                 Pallet</span>
+                            <span class="text-[10px] uppercase font-bold text-slate-600 tracking-widest">Square Feet</span>
                             <span
                                 class="text-[10px] uppercase font-bold text-slate-600 tracking-widest text-center">Total</span>
                         </div>
@@ -1076,7 +1115,7 @@ if ($current_tab === 'other') {
                                 <p id="disp-balance-due" class="text-base font-bold text-rose-600">Rs. 0</p>
                             </div>
                             <div class="text-center px-4 flex-1">
-                                <p class="text-[9px] uppercase font-bold text-cyan-600 mb-1">Unit Cost</p>
+                                <p class="text-[9px] uppercase font-bold text-cyan-600 mb-1">Unit Cost (Sqft)</p>
                                 <p id="disp-per-item-cost" class="text-base font-bold text-cyan-600">Rs. 0</p>
                             </div>
                         </div>
@@ -1099,11 +1138,11 @@ if ($current_tab === 'other') {
     <div id="purchase-modal-container"
         class="fixed inset-0 bg-black/40 backdrop-blur-[3px] z-50 flex items-center justify-center p-2 sm:p-4 hidden">
         <div
-            class="container-modal w-full max-w-4xl max-h-[95vh] overflow-y-auto rounded-[20px] sm:rounded-[30px] shadow-2xl">
+            class="container-modal w-full max-w-6xl max-h-[95vh] overflow-y-auto rounded-[20px] sm:rounded-[30px] shadow-2xl">
             <div class="p-4 sm:p-8">
                 <div class="flex items-center justify-between mb-6 sm:mb-8 text-slate-800">
                     <div>
-                        <h2 id="p-modal-title" class="text-xl sm:text-2xl font-bold">Add New Purchase</h2>
+                        <h2 id="p-modal-title" class="text-3xl sm:text-4xl font-black text-slate-800 tracking-tight">Add New Purchase</h2>
                     </div>
                     <button onclick="closePurchaseModal()" class="text-slate-400 hover:text-slate-600">
                         <i class="fa-solid fa-times text-2xl"></i>
@@ -1114,7 +1153,7 @@ if ($current_tab === 'other') {
                     <input type="hidden" name="action" value="save_purchase">
                     <input type="hidden" id="p_id" name="id">
 
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-10">
                         <div class="flex flex-col space-y-2">
                             <label class="text-xs uppercase font-bold text-slate-500 tracking-wider">Purchase
                                 Number</label>
@@ -1186,28 +1225,24 @@ if ($current_tab === 'other') {
 
                     <div
                         class="flex flex-col md:flex-row justify-between items-end gap-4 pt-6 border-t border-slate-100 mt-4">
-                        <div class="flex flex-wrap gap-4 md:gap-6 items-end w-full md:w-auto">
-                            <div class="flex flex-col space-y-1">
-                                <label class="text-[10px] uppercase font-bold text-slate-500">Invoice Discount</label>
+                        <div class="flex flex-wrap gap-10 md:gap-16 items-end w-full md:w-auto">
+                            <div class="flex flex-col space-y-2">
+                                <label class="text-xs uppercase font-black text-slate-500">Invoice Discount</label>
                                 <input type="number" step="0.01" name="discount" id="p_discount"
-                                    class="input-glass text-right w-24 h-[42px]" oninput="calculatePurchaseTotals()"
+                                    class="input-glass text-right w-44 h-[60px] text-xl font-black" oninput="calculatePurchaseTotals()"
                                     value="0">
                             </div>
-                            <div class="flex flex-col space-y-1">
-                                <span class="text-[10px] uppercase font-bold text-slate-500">Purchases Total</span>
-                                <span id="p_disp_sub_total"
-                                    class="font-bold text-slate-700 h-[42px] flex items-center">Rs. 0.00</span>
+                            <div class="flex flex-col space-y-2 px-6 border-l-2 border-slate-100">
+                                <label class="text-xs uppercase font-black text-slate-400">Purchases Total</label>
+                                <div id="p_disp_sub_total" class="text-2xl font-black text-slate-800 tracking-tight">Rs. 0.00</div>
                             </div>
-                            <div class="flex flex-col space-y-1">
-                                <span class="text-[10px] uppercase font-bold text-amber-600">Total Expenses</span>
-                                <span id="p_disp_total_expenses"
-                                    class="font-bold text-amber-600 h-[42px] flex items-center">Rs. 0.00</span>
+                            <div class="flex flex-col space-y-2 px-6 border-l-2 border-slate-100">
+                                <label class="text-xs uppercase font-black text-amber-500">Total Expenses</label>
+                                <div id="p_disp_total_expenses" class="text-2xl font-black text-amber-600 tracking-tight">Rs. 0.00</div>
                             </div>
-                            <div class="flex flex-col space-y-1">
-                                <span class="text-[10px] uppercase font-bold text-indigo-600">Grand Total</span>
-                                <span id="p_disp_grand_total"
-                                    class="font-black text-indigo-600 text-xl h-[42px] flex items-center">Rs.
-                                    0.00</span>
+                            <div class="flex flex-col space-y-3 px-10 bg-indigo-50/50 rounded-[40px] py-4 border-2 border-indigo-100 shadow-sm ml-6">
+                                <label class="text-xs uppercase font-black text-indigo-500">Grand Total Amount</label>
+                                <div id="p_disp_grand_total" class="text-4xl font-black text-indigo-700 tracking-tighter">Rs. 0.00</div>
                             </div>
                         </div>
                         <div class="flex gap-3 h-[42px] w-full md:w-auto justify-end">
@@ -1274,7 +1309,7 @@ if ($current_tab === 'other') {
         function addItemRow(data = null) {
             const rowId = Date.now() + Math.random();
             const html = `
-                <div class="item-row grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 bg-white/40 p-4 rounded-xl border border-slate-200/60 relative group shadow-sm" id="item_${rowId}">
+                <div class="item-row grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 bg-white/40 p-4 rounded-xl border border-slate-200/60 relative group shadow-sm" id="item_${rowId}">
                     <div class="sm:col-span-2 lg:col-span-2 relative">
                         <label class="text-[9px] uppercase font-bold text-slate-400 mb-1 lg:hidden block">Brand Name</label>
                         <input type="text" placeholder="e.g. 18mm, 15mm" class="brand-input input-glass w-full" oninput="suggestBrands(this)" autocomplete="off" value="${data ? data.brand_name : ''}" ${currentMode === 'view' ? 'disabled' : ''}>
@@ -1287,6 +1322,10 @@ if ($current_tab === 'other') {
                     <div>
                         <label class="text-[9px] uppercase font-bold text-slate-400 mb-1 lg:hidden block">Qty/Pallet</label>
                         <input type="number" placeholder="0" class="input-glass qty-input w-full" oninput="calculateTotals()" required value="${data ? data.qty_per_pallet : ''}" ${currentMode === 'view' ? 'disabled' : ''}>
+                    </div>
+                    <div>
+                        <label class="text-[9px] uppercase font-bold text-slate-400 mb-1 lg:hidden block">Square Feet</label>
+                        <input type="number" step="0.001" placeholder="0.00" class="input-glass sqft-input w-full" oninput="calculateTotals()" required value="${data ? data.square_feet : ''}" ${currentMode === 'view' ? 'disabled' : ''}>
                     </div>
                     <div class="flex flex-row sm:flex-col lg:flex-col justify-between sm:justify-center items-center h-full bg-slate-50 p-2 sm:p-0 rounded-lg border border-slate-100">
                         <span class="text-[8px] uppercase text-slate-400 font-bold">Row Total</span>
@@ -1391,7 +1430,7 @@ if ($current_tab === 'other') {
                 .then(data => {
                     if (data.length > 0) {
                         suggestionsDiv.innerHTML = data.map(name => `
-                            <div class="px-3 py-2 text-sm text-slate-300 hover:bg-purple-500/20 hover:text-white cursor-pointer border-b border-white/5 last:border-0 transition-colors flex items-center gap-2"
+                            <div class="px-3 py-2 text-sm text-purple-900 hover:bg-purple-500/20 hover:text-purple-700 cursor-pointer border-b border-white/5 last:border-0 transition-colors flex items-center gap-2"
                                  onmousedown="selectBrand(this, '${name.replace(/'/g, "\\'")}')"
                             >
                                 <i class="fa-solid fa-tag text-[9px] text-purple-400"></i>
@@ -1454,17 +1493,29 @@ if ($current_tab === 'other') {
             }
 
             let totalQty = 0;
+            let totalSqft = 0;
             document.querySelectorAll('.item-row').forEach(row => {
                 const p = parseInt(row.querySelector('.pallets-input').value || 0);
                 const q = parseInt(row.querySelector('.qty-input').value || 0);
+                const s = parseFloat(row.querySelector('.sqft-input').value || 0);
                 const rowTotal = p * q;
                 row.querySelector('.row-total-qty').innerText = rowTotal.toLocaleString();
                 totalQty += rowTotal;
+                totalSqft += rowTotal * s;
             });
 
             const damagedQty = parseInt(document.getElementById('damaged_qty').value || 0);
             const netQty = totalQty - damagedQty;
-            const perItemCost = (netQty > 0) ? (totalExpenses / netQty) : 0;
+            
+            let perItemCost = 0;
+            if (totalSqft > 0) {
+                const avgSqft = totalQty > 0 ? (totalSqft / totalQty) : 0;
+                const netSqft = totalSqft - (damagedQty * avgSqft);
+                perItemCost = (netSqft > 0) ? (totalExpenses / netSqft) : 0;
+            } else {
+                perItemCost = (netQty > 0) ? (totalExpenses / netQty) : 0;
+            }
+            
             const balanceDue = Math.max(0, totalExpenses - totalPaid);
 
             document.getElementById('disp-total-expenses').innerText = "Rs. " + totalExpenses.toLocaleString('en-US', { minimumFractionDigits: 2 });
@@ -1539,7 +1590,8 @@ if ($current_tab === 'other') {
                 items.push({
                     brand: row.querySelector('.brand-input').value,
                     pallets: row.querySelector('.pallets-input').value,
-                    qty_per_pallet: row.querySelector('.qty-input').value
+                    qty_per_pallet: row.querySelector('.qty-input').value,
+                    square_feet: row.querySelector('.sqft-input').value
                 });
             });
             formData.append('items', JSON.stringify(items));
@@ -1749,33 +1801,64 @@ if ($current_tab === 'other') {
             document.body.classList.remove('overflow-hidden');
         }
 
-        function addPurchaseItemRow(name = '', qty = '', price = '') {
+        function addPurchaseItemRow(name = '', qty = '', sqft = '', price = '', category = 'Other') {
             const rowId = 'p_item_' + Date.now() + Math.random();
+            const isGlass = category === 'Glass';
             const html = `
-                <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 bg-slate-50/50 p-4 rounded-2xl border border-slate-100 relative group" id="${rowId}">
-                    <div class="col-span-2 lg:col-span-1 flex flex-col space-y-2">
-                        <label class="text-[10px] uppercase font-bold text-slate-500">Item Name</label>
-                        <input type="text" name="p_item_names[]" class="input-glass" value="${name}" required>
+                <div class="flex flex-row items-end gap-x-4 bg-slate-50/50 p-6 sm:p-7 rounded-3xl border-2 border-slate-100 relative group w-full p-item-row" id="${rowId}">
+                    <div class="w-36 flex flex-col space-y-2">
+                        <label class="text-xs uppercase font-black text-slate-500 ml-1">Category</label>
+                        <select class="p_item_category input-glass h-[52px] text-base font-bold" onchange="togglePurchaseSqft(this)">
+                            <option value="Other" ${category === 'Other' ? 'selected' : ''}>Other</option>
+                            <option value="Glass" ${category === 'Glass' ? 'selected' : ''}>Glass</option>
+                        </select>
                     </div>
-                    <div class="flex flex-col space-y-2">
-                        <label class="text-[10px] uppercase font-bold text-slate-500">Qty</label>
-                        <input type="number" name="p_item_qtys[]" class="input-glass text-center" value="${qty}" required oninput="calculatePurchaseTotals()">
+                    <div class="flex-1 flex flex-col space-y-2 min-w-[150px]">
+                        <label class="text-xs uppercase font-black text-slate-500 ml-1">Item Name</label>
+                        <input type="text" class="p_item_name input-glass h-[52px] text-base" value="${name}" required placeholder="Name">
                     </div>
-                    <div class="flex flex-col space-y-2">
-                        <label class="text-[10px] uppercase font-bold text-slate-500">Price/Item</label>
-                        <input type="number" step="0.01" name="p_item_prices[]" class="input-glass text-right" value="${price}" required oninput="calculatePurchaseTotals()">
+                    <div class="w-28 flex flex-col space-y-2">
+                        <label class="text-xs uppercase font-black text-slate-500 ml-1">Qty (Pcs)</label>
+                        <input type="number" class="p_item_qty input-glass h-[52px] text-base text-center font-bold" value="${qty}" required oninput="calculatePurchaseTotals()" placeholder="0">
                     </div>
-                    <div class="flex flex-col space-y-2">
-                        <label class="text-[10px] uppercase font-bold text-indigo-600">Line Total</label>
-                        <input type="hidden" class="p_item_line_totals" value="0">
-                        <div class="p_disp_line_total h-[42px] flex items-center justify-end px-3 bg-white rounded-xl border border-indigo-100 font-bold text-indigo-600">Rs. 0.00</div>
+                    <div class="w-28 p_sqft_container flex flex-col space-y-2 ${isGlass ? '' : 'hidden'}">
+                        <label class="text-xs uppercase font-black text-slate-500 ml-1">Sqft</label>
+                        <input type="number" step="0.001" class="p_item_sqft input-glass h-[52px] text-base text-center font-bold" value="${sqft}" oninput="calculatePurchaseTotals()" placeholder="0.00">
                     </div>
-                    <button type="button" onclick="document.getElementById('${rowId}').remove(); calculatePurchaseTotals();" class="absolute -right-2 -top-2 bg-rose-500 text-white w-6 h-6 rounded-full text-[10px] items-center justify-center flex shadow-lg hover:scale-110">
+                    <div class="w-40 flex flex-col space-y-2">
+                        <label class="text-xs uppercase font-black text-slate-500 ml-1">Price/Unit</label>
+                        <input type="number" step="0.01" class="p_item_price input-glass h-[52px] text-lg text-right font-black text-indigo-600" value="${price}" required oninput="calculatePurchaseTotals()" placeholder="0.00">
+                    </div>
+                    <div class="w-44 p_cost_sqft_container flex flex-col space-y-2 ${isGlass ? '' : 'hidden'}">
+                        <label class="text-xs uppercase font-black text-cyan-600 ml-1">Cost/Sqft</label>
+                        <div class="p_disp_cost_sqft h-[52px] flex items-center justify-end px-4 bg-white rounded-2xl border-2 border-cyan-100 font-black text-cyan-600 text-base whitespace-nowrap overflow-hidden">0.00</div>
+                    </div>
+                    <div class="w-52 flex flex-col space-y-2">
+                        <label class="text-xs uppercase font-black text-indigo-600 ml-1">Line Total</label>
+                        <div class="p_disp_line_total h-[52px] flex items-center justify-end px-4 bg-white rounded-2xl border-2 border-indigo-100 font-black text-indigo-600 text-base shadow-sm whitespace-nowrap overflow-hidden">0.00</div>
+                    </div>
+                    <button type="button" onclick="document.getElementById('${rowId}').remove(); calculatePurchaseTotals();" class="absolute -right-4 -top-4 bg-rose-500 text-white w-9 h-9 rounded-full text-sm items-center justify-center flex shadow-xl hover:scale-110 active:scale-95 transition-all">
                         <i class="fa-solid fa-times"></i>
                     </button>
                 </div>
             `;
             document.getElementById('p-items-list').insertAdjacentHTML('beforeend', html);
+        }
+
+        function togglePurchaseSqft(select) {
+            const row = select.closest('.group');
+            const sqftCont = row.querySelector('.p_sqft_container');
+            const costSqftCont = row.querySelector('.p_cost_sqft_container');
+            
+            if (select.value === 'Glass') {
+                sqftCont.classList.remove('hidden');
+                costSqftCont.classList.remove('hidden');
+            } else {
+                sqftCont.classList.add('hidden');
+                costSqftCont.classList.add('hidden');
+                row.querySelector('.p_item_sqft').value = '';
+            }
+            calculatePurchaseTotals();
         }
 
         function addPurchaseExpenseRow(name = '', amount = '') {
@@ -1798,18 +1881,50 @@ if ($current_tab === 'other') {
 
         function addPurchasePaymentRow(data = null) {
             const rowId = 'p_pay_' + Date.now() + Math.random();
+            const method = data ? data.method : 'Cash';
             const html = `
-                <div class="grid grid-cols-1 md:grid-cols-4 gap-3 bg-white/50 p-4 rounded-xl border border-slate-200 relative group" id="${rowId}">
-                    <div class="md:col-span-2">
-                        <input type="text" name="p_payment_bank[]" placeholder="Bank Name" class="input-glass w-full" oninput="suggestBanks(this)" value="${data ? data.bank_name : ''}" required>
+                <div class="bg-white/50 p-6 sm:p-8 rounded-[30px] border-2 border-slate-200 relative group space-y-5" id="${rowId}">
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-8">
+                        <div>
+                            <label class="text-xs uppercase font-black text-slate-500 ml-1">Method</label>
+                            <select class="p_pay_method input-glass w-full text-base h-[52px] font-bold" onchange="togglePurchasePayFields(this)" required>
+                                <option value="Cash" ${method === 'Cash' ? 'selected' : ''}>Cash</option>
+                                <option value="Account Transfer" ${method === 'Account Transfer' ? 'selected' : ''}>Account Transfer</option>
+                                <option value="Cheque" ${method === 'Cheque' ? 'selected' : ''}>Cheque</option>
+                            </select>
+                        </div>
+                        <div class="p_pay_bank_cont ${method !== 'Cash' ? '' : 'hidden'}">
+                            <label class="text-xs uppercase font-black text-slate-500 ml-1">Bank Name</label>
+                            <input type="text" class="p_pay_bank input-glass w-full text-base h-[52px]" placeholder="Search saved banks..." oninput="suggestBanks(this)" value="${data ? data.bank_name : ''}" autocomplete="off">
+                            <div class="bank-suggestions absolute left-0 top-full mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-xl hidden z-[100] max-h-40 overflow-y-auto"></div>
+                        </div>
+                        <div>
+                            <label class="text-xs uppercase font-black text-slate-500 ml-1">Amount</label>
+                            <input type="number" step="0.01" class="p_pay_amount input-glass w-full text-right font-black text-lg h-[52px] text-emerald-600" oninput="calculatePurchaseTotals()" value="${data ? data.amount : ''}" required>
+                        </div>
+                        <div>
+                            <label class="text-xs uppercase font-black text-slate-500 ml-1">Date</label>
+                            <input type="date" class="p_pay_date input-glass w-full text-base h-[52px] font-bold" value="${data ? data.payment_date : '<?php echo date('Y-m-d'); ?>'}" required>
+                        </div>
                     </div>
-                    <div>
-                        <input type="number" step="0.01" name="p_payment_amount[]" placeholder="Amount" class="input-glass w-full text-right" oninput="calculatePurchaseTotals()" value="${data ? data.amount : ''}" required>
+                    
+                    <div class="p_pay_extra_fields ${method === 'Cheque' ? '' : 'hidden'} grid grid-cols-1 md:grid-cols-2 gap-8 pb-2 transition-all">
+                        <div>
+                            <label class="text-xs uppercase font-black text-slate-500 ml-1">Cheque Number</label>
+                            <input type="text" class="p_pay_chq_no input-glass w-full text-base h-[52px] font-bold" placeholder="XXXXXX" value="${data ? data.cheque_number : ''}">
+                        </div>
+                        <div>
+                            <label class="text-xs uppercase font-black text-slate-500 ml-1">Payer Name</label>
+                            <input type="text" class="p_pay_payer input-glass w-full text-base h-[52px]" placeholder="Optional" value="${data ? data.payer_name : ''}">
+                        </div>
                     </div>
-                    <div>
-                        <input type="date" name="p_payment_date[]" class="input-glass w-full" value="${data ? data.payment_date : '<?php echo date('Y-m-d'); ?>'}" required>
+
+                    <div class="pb-1">
+                        <label class="text-xs uppercase font-black text-slate-500 ml-1">Description / Memo</label>
+                        <input type="text" class="p_pay_desc input-glass w-full text-base h-[52px]" placeholder="Optional notes..." value="${data ? data.description : ''}">
                     </div>
-                    <button type="button" onclick="document.getElementById('${rowId}').remove(); calculatePurchaseTotals();" class="absolute -right-2 -top-2 bg-rose-500 text-white w-6 h-6 rounded-full text-[10px] flex items-center justify-center shadow-lg">
+
+                    <button type="button" onclick="document.getElementById('${rowId}').remove(); calculatePurchaseTotals();" class="absolute -right-4 -top-4 bg-rose-500 text-white w-9 h-9 rounded-full text-sm flex items-center justify-center shadow-xl hover:scale-110 active:scale-95 transition-all">
                         <i class="fa-solid fa-times"></i>
                     </button>
                 </div>
@@ -1817,15 +1932,30 @@ if ($current_tab === 'other') {
             pPaymentsList.insertAdjacentHTML('beforeend', html);
         }
 
+        function togglePurchasePayFields(select) {
+            const row = select.closest('.group');
+            const method = select.value;
+            row.querySelector('.p_pay_bank_cont').classList.toggle('hidden', method === 'Cash');
+            row.querySelector('.p_pay_extra_fields').classList.toggle('hidden', method !== 'Cheque');
+        }
+
         function calculatePurchaseTotals() {
             let subtotal = 0;
-            const items = document.querySelectorAll('#p-items-list .grid');
+            const items = document.querySelectorAll('#p-items-list .p-item-row');
             items.forEach(row => {
-                const qty = parseFloat(row.querySelector('input[name="p_item_qtys[]"]').value) || 0;
-                const price = parseFloat(row.querySelector('input[name="p_item_prices[]"]').value) || 0;
+                const category = row.querySelector('.p_item_category').value;
+                const qty = parseFloat(row.querySelector('.p_item_qty').value) || 0;
+                const sqft = parseFloat(row.querySelector('.p_item_sqft').value) || 0;
+                const price = parseFloat(row.querySelector('.p_item_price').value) || 0;
+
                 const lineTotal = qty * price;
-                row.querySelector('.p_item_line_totals').value = lineTotal;
                 row.querySelector('.p_disp_line_total').innerText = 'Rs. ' + lineTotal.toLocaleString(undefined, { minimumFractionDigits: 2 });
+
+                if (category === 'Glass' && sqft > 0) {
+                    const costSqft = lineTotal / sqft;
+                    row.querySelector('.p_disp_cost_sqft').innerText = costSqft.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                }
+
                 subtotal += lineTotal;
             });
 
@@ -1847,7 +1977,7 @@ if ($current_tab === 'other') {
 
             // Add payments
             let paid = 0;
-            document.querySelectorAll('input[name="p_payment_amount[]"]').forEach(input => {
+            document.querySelectorAll('.p_pay_amount').forEach(input => {
                 paid += parseFloat(input.value) || 0;
             });
 
@@ -1867,7 +1997,7 @@ if ($current_tab === 'other') {
                     if (data.length > 0) {
                         data.forEach(name => {
                             const div = document.createElement('div');
-                            div.className = 'px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm font-medium border-b border-slate-50 last:border-0';
+                            div.className = 'px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm font-medium border-b border-slate-50 last:border-0 text-purple-900';
                             div.innerText = name;
                             div.onclick = () => { input.value = name; resBox.classList.add('hidden'); };
                             resBox.appendChild(div);
@@ -1897,16 +2027,17 @@ if ($current_tab === 'other') {
                 .then(data => {
                     resBox.innerHTML = '';
                     if (data.length > 0) {
-                        data.forEach(name => {
+                        data.forEach(b => {
                             const div = document.createElement('div');
-                            div.className = 'px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm font-medium border-b border-slate-50 last:border-0';
-                            div.innerText = name;
-                            div.onclick = () => { input.value = name; resBox.classList.add('hidden'); };
+                            div.className = 'px-4 py-2 hover:bg-slate-50 cursor-pointer text-sm font-medium border-b border-slate-50 last:border-0 text-purple-900';
+                            div.innerHTML = `<p class="text-xs font-black text-slate-800 uppercase">${b.name}</p><p class="text-[9px] font-bold text-slate-400">ACC: ${b.account_number || 'N/A'}</p>`;
+                            div.onclick = () => { input.value = b.name; resBox.classList.add('hidden'); };
                             resBox.appendChild(div);
                         });
                         resBox.classList.remove('hidden');
                     } else {
-                        resBox.classList.add('hidden');
+                        resBox.innerHTML = `<div class="p-3 text-center"><p class="text-[9px] font-black text-slate-400 uppercase mb-2">Not found</p><button type="button" onclick="openOpCreateBankModal('${val.replace(/'/g, "\\'")}')" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-xl text-[10px] font-black uppercase">Create New</button></div>`;
+                        resBox.classList.remove('hidden');
                     }
                 });
         }
@@ -1923,11 +2054,13 @@ if ($current_tab === 'other') {
             formData.append('discount', document.getElementById('p_discount').value);
 
             const p_items = [];
-            document.querySelectorAll('#p-items-list .grid').forEach(row => {
+            document.querySelectorAll('#p-items-list .p-item-row').forEach(row => {
                 p_items.push({
-                    name: row.querySelector('input[name="p_item_names[]"]').value,
-                    qty: row.querySelector('input[name="p_item_qtys[]"]').value,
-                    price: row.querySelector('input[name="p_item_prices[]"]').value
+                    category: row.querySelector('.p_item_category').value,
+                    name: row.querySelector('.p_item_name').value,
+                    qty: row.querySelector('.p_item_qty').value,
+                    sqft: row.querySelector('.p_item_sqft').value,
+                    price: row.querySelector('.p_item_price').value
                 });
             });
             formData.append('items', JSON.stringify(p_items));
@@ -1942,14 +2075,15 @@ if ($current_tab === 'other') {
             formData.append('expenses', JSON.stringify(expenses));
 
             const payments = [];
-            document.querySelectorAll('#p-payments-list .grid').forEach(row => {
+            document.querySelectorAll('#p-payments-list .group').forEach(row => {
                 payments.push({
-                    bank_name: row.querySelector('input[name="p_payment_bank[]"]').value,
-                    amount: row.querySelector('input[name="p_payment_amount[]"]').value,
-                    payment_date: row.querySelector('input[name="p_payment_date[]"]').value,
-                    method: 'Account Transfer', // Defaulting for simple purchases
-                    description: '',
-                    cheque_number: ''
+                    method: row.querySelector('.p_pay_method').value,
+                    bank_name: row.querySelector('.p_pay_bank').value,
+                    amount: row.querySelector('.p_pay_amount').value,
+                    payment_date: row.querySelector('.p_pay_date').value,
+                    cheque_number: row.querySelector('.p_pay_chq_no').value,
+                    payer_name: row.querySelector('.p_pay_payer').value,
+                    description: row.querySelector('.p_pay_desc').value
                 });
             });
             formData.append('payments', JSON.stringify(payments));
@@ -1980,13 +2114,21 @@ if ($current_tab === 'other') {
                         document.getElementById('p_discount').value = d.discount;
 
                         document.getElementById('p-items-list').innerHTML = '';
-                        d.items.forEach(it => addPurchaseItemRow(it.item_name, it.qty, it.price_per_item));
+                        d.items.forEach(it => addPurchaseItemRow(it.item_name, it.qty, it.square_feet, it.price_per_item, it.category));
 
                         pExpensesList.innerHTML = '';
                         d.expenses.forEach(ex => addPurchaseExpenseRow(ex.expense_name, ex.amount));
 
                         pPaymentsList.innerHTML = '';
-                        d.payments.forEach(py => addPurchasePaymentRow(py));
+                        d.payments.forEach(py => addPurchasePaymentRow({
+                            method: py.method,
+                            bank_name: py.bank_name,
+                            amount: py.amount,
+                            payment_date: py.payment_date || py.created_at,
+                            cheque_number: py.cheque_number,
+                            payer_name: py.payer_name,
+                            description: py.description
+                        }));
 
                         calculatePurchaseTotals();
                     }
