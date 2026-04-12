@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Apr 07, 2026 at 05:46 PM
+-- Generation Time: Apr 12, 2026 at 04:11 AM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.0.30
 
@@ -336,6 +336,13 @@ CREATE TABLE `employee_salary_settings` (
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Dumping data for table `employee_salary_settings`
+--
+
+INSERT INTO `employee_salary_settings` (`id`, `user_id`, `monthly_salary`, `payment_frequency`, `created_at`, `updated_at`) VALUES
+(1, 7, 10000.00, 'weekly', '2026-04-12 01:50:33', '2026-04-12 01:50:39');
 
 -- --------------------------------------------------------
 
@@ -681,8 +688,8 @@ ALTER TABLE `delivery_proof_photos`
 --
 ALTER TABLE `employee_salary_payments`
   ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `uniq_employee_salary_month` (`user_id`,`salary_month`,`salary_year`),
-  ADD KEY `recorded_by` (`recorded_by`);
+  ADD KEY `recorded_by` (`recorded_by`),
+  ADD KEY `idx_user_id` (`user_id`);
 
 --
 -- Indexes for table `employee_salary_settings`
@@ -879,13 +886,13 @@ ALTER TABLE `delivery_proof_photos`
 -- AUTO_INCREMENT for table `employee_salary_payments`
 --
 ALTER TABLE `employee_salary_payments`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
 --
 -- AUTO_INCREMENT for table `employee_salary_settings`
 --
 ALTER TABLE `employee_salary_settings`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
 --
 -- AUTO_INCREMENT for table `monthly_expenses`
