@@ -50,6 +50,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 					throw new Exception('Selected employee does not exist.');
 				}
 
+                $setStmt = $pdo->prepare("SELECT monthly_salary FROM employee_salary_settings WHERE user_id = ?");
+                $setStmt->execute([$employee_id]);
+                $setRow = $setStmt->fetch();
+                $actual_salary = $setRow ? (float)$setRow['monthly_salary'] : 0.0;
+
 				$deliveriesStmt = $pdo->prepare("SELECT COUNT(DISTINCT de.delivery_id)
 					FROM delivery_employees de
 					JOIN deliveries d ON d.id = de.delivery_id
@@ -57,29 +62,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 				$deliveriesStmt->execute([$employee_id, $pay_month, $pay_year]);
 				$delivery_count = (int)$deliveriesStmt->fetchColumn();
 
-				$existingStmt = $pdo->prepare("SELECT id, status FROM employee_salary_payments WHERE user_id = ? AND salary_month = ? AND salary_year = ? FOR UPDATE");
+				$existingStmt = $pdo->prepare("SELECT SUM(salary_amount) FROM employee_salary_payments WHERE user_id = ? AND salary_month = ? AND salary_year = ? AND status='paid' FOR UPDATE");
 				$existingStmt->execute([$employee_id, $pay_month, $pay_year]);
-				$existingPayment = $existingStmt->fetch();
+				$already_paid = (float)$existingStmt->fetchColumn();
 
-				if ($existingPayment && $existingPayment['status'] === 'paid') {
-					throw new Exception('Salary already paid for this employee/month.');
+				if (round($already_paid + $salary_amount, 2) > round($actual_salary, 2)) {
+					throw new Exception('Payment amount exceeds the remaining salary for this month.');
 				}
 
-				$settingStmt = $pdo->prepare("INSERT INTO employee_salary_settings (user_id, monthly_salary) VALUES (?, ?)
-					ON DUPLICATE KEY UPDATE monthly_salary = VALUES(monthly_salary)");
-				$settingStmt->execute([$employee_id, $salary_amount]);
-
-				if ($existingPayment) {
-					$updatePaymentStmt = $pdo->prepare("UPDATE employee_salary_payments
-						SET deliveries_count = ?, salary_amount = ?, payment_date = ?, status = 'paid', paid_at = NOW(), recorded_by = ?
-						WHERE id = ?");
-					$updatePaymentStmt->execute([$delivery_count, $salary_amount, $payment_date, $_SESSION['user_id'], $existingPayment['id']]);
-				} else {
-					$insertPaymentStmt = $pdo->prepare("INSERT INTO employee_salary_payments
-						(user_id, salary_month, salary_year, deliveries_count, salary_amount, payment_date, status, paid_at, recorded_by)
-						VALUES (?, ?, ?, ?, ?, ?, 'paid', NOW(), ?)");
-					$insertPaymentStmt->execute([$employee_id, $pay_month, $pay_year, $delivery_count, $salary_amount, $payment_date, $_SESSION['user_id']]);
-				}
+                // Insert as a new partial/full payment record
+                $insertPaymentStmt = $pdo->prepare("INSERT INTO employee_salary_payments
+                    (user_id, salary_month, salary_year, deliveries_count, salary_amount, payment_date, status, paid_at, recorded_by)
+                    VALUES (?, ?, ?, ?, ?, ?, 'paid', NOW(), ?)");
+                $insertPaymentStmt->execute([$employee_id, $pay_month, $pay_year, $delivery_count, $salary_amount, $payment_date, $_SESSION['user_id']]);
 
 				$pdo->commit();
 				$salary_success = 'Salary payment saved successfully.';
@@ -89,25 +84,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 				}
 				$salary_error = $e->getMessage();
 			}
-		}
-	}
-
-	if ($salary_action === 'update_payment_status') {
-		$payment_id = (int)($_POST['payment_id'] ?? 0);
-		$new_status = $_POST['new_status'] ?? '';
-		$payment_date = $_POST['payment_date'] ?? date('Y-m-d');
-
-		if ($payment_id <= 0 || !in_array($new_status, ['paid', 'nonpaid'], true)) {
-			$salary_error = 'Invalid payment status update request.';
-		} else {
-			$updateStatusStmt = $pdo->prepare("UPDATE employee_salary_payments
-				SET status = ?,
-					payment_date = CASE WHEN ? = 'paid' THEN ? ELSE NULL END,
-					paid_at = CASE WHEN ? = 'paid' THEN NOW() ELSE NULL END,
-					recorded_by = ?
-				WHERE id = ?");
-			$updateStatusStmt->execute([$new_status, $new_status, $payment_date, $new_status, $_SESSION['user_id'], $payment_id]);
-			$salary_success = 'Payment status updated.';
 		}
 	}
 
@@ -178,6 +154,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 		}
 		exit;
 	}
+
+    if ($salary_action === 'get_payment_history') {
+        header('Content-Type: application/json');
+        $emp_id = (int)($_POST['employee_id'] ?? 0);
+        $s_month = (int)($_POST['salary_month'] ?? date('n'));
+        $s_year = (int)($_POST['salary_year'] ?? date('Y'));
+
+        $stmt = $pdo->prepare("SELECT monthly_salary, payment_frequency FROM employee_salary_settings WHERE user_id = ?");
+        $stmt->execute([$emp_id]);
+        $setting = $stmt->fetch(PDO::FETCH_ASSOC);
+        $monthly_salary = $setting ? (float)$setting['monthly_salary'] : 0.0;
+        $frequency = $setting ? $setting['payment_frequency'] : 'monthly';
+
+        $pStmt = $pdo->prepare("SELECT id, salary_amount, payment_date FROM employee_salary_payments WHERE user_id = ? AND salary_month = ? AND salary_year = ? AND status = 'paid' ORDER BY payment_date ASC, id ASC");
+        $pStmt->execute([$emp_id, $s_month, $s_year]);
+        $payments = $pStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $total_paid = 0;
+        $history_html = '';
+        foreach ($payments as $p) {
+            $total_paid += (float)$p['salary_amount'];
+            $history_html .= '
+            <div class="flex justify-between items-center text-xs py-1.5 border-b border-slate-100 last:border-0">
+                <div class="flex flex-col">
+                    <span class="font-bold text-slate-800">LKR ' . number_format($p['salary_amount'], 2) . '</span>
+                    <span class="text-[9px] text-slate-400 capitalize whitespace-nowrap">' . date('M d, Y', strtotime($p['payment_date'])) . '</span>
+                </div>
+                <form method="POST" onsubmit="return confirm(\'Delete this payment record?\');">
+                    <input type="hidden" name="salary_action" value="delete_payment">
+                    <input type="hidden" name="payment_id" value="' . (int)$p['id'] . '">
+                    <button type="submit" class="text-[10px] text-rose-500 hover:text-rose-700 bg-rose-50 px-2 py-1 rounded">Delete</button>
+                </form>
+            </div>';
+        }
+        
+        if (empty($history_html)) {
+            $history_html = '<div class="text-[10px] uppercase font-black tracking-widest text-slate-400 py-3 text-center">No history yet</div>';
+        }
+
+        $remaining = max(0, $monthly_salary - $total_paid);
+
+        echo json_encode([
+            'success' => true,
+            'frequency' => ucfirst($frequency),
+            'total_salary' => $monthly_salary,
+            'total_paid' => $total_paid,
+            'remaining' => $remaining,
+            'history_html' => $history_html
+        ]);
+        exit;
+    }
 }
 
 $staffWhere = ["u.role = 'employee'"];
@@ -216,7 +243,10 @@ $paymentRows = $paymentStmt->fetchAll(PDO::FETCH_ASSOC);
 
 $paymentMap = [];
 foreach ($paymentRows as $payRow) {
-	$paymentMap[(int)$payRow['user_id']] = $payRow;
+    if (!isset($paymentMap[(int)$payRow['user_id']])) {
+        $paymentMap[(int)$payRow['user_id']] = [];
+    }
+	$paymentMap[(int)$payRow['user_id']][] = $payRow;
 }
 
 $staff_salary_rows = [];
@@ -226,19 +256,50 @@ $pending_count = 0;
 
 foreach ($staff_raw as $staff) {
 	$staffId = (int)$staff['id'];
-	$payment = $paymentMap[$staffId] ?? null;
-	$status = $payment['status'] ?? 'nonpaid';
-	$salary_amount = isset($payment['salary_amount']) ? (float)$payment['salary_amount'] : (float)$staff['monthly_salary'];
-
-	if ($status === 'paid') {
-		$total_paid_salary += $salary_amount;
-		$paid_count++;
+	$payments = $paymentMap[$staffId] ?? [];
+    
+    $total_paid = 0.0;
+    $last_payment_date = null;
+    $last_payment_id = null;
+    
+    foreach ($payments as $p) {
+        if ($p['status'] === 'paid') {
+            $total_paid += (float)$p['salary_amount'];
+            if (!$last_payment_date || $p['payment_date'] > $last_payment_date) {
+                $last_payment_date = $p['payment_date'];
+            }
+            $last_payment_id = $p['id'];
+        }
+    }
+    
+    $salary_amount = (float)$staff['monthly_salary'];
+	
+    if ($salary_amount > 0 && round($total_paid, 2) >= round($salary_amount, 2)) {
+		$status = 'paid';
+	} elseif ($total_paid > 0) {
+		$status = 'partial';
 	} else {
-		$pending_count++;
+		$status = 'nonpaid';
 	}
 
-	if ($salary_status !== 'all' && $status !== $salary_status) {
-		continue;
+	if ($salary_status !== 'all') {
+        if ($salary_status === 'paid' && $status !== 'paid') {
+            continue;
+        }
+        if ($salary_status === 'nonpaid' && $status === 'paid') {
+            // Partial is treated as nonpaid for filtering purposes
+            continue;
+        }
+    }
+
+    if ($status === 'paid') {
+		$total_paid_salary += $total_paid;
+		$paid_count++;
+	} elseif ($status === 'partial') {
+        $total_paid_salary += $total_paid;
+        $pending_count++;
+    } else {
+		$pending_count++;
 	}
 
 	$staff_salary_rows[] = [
@@ -246,12 +307,12 @@ foreach ($staff_raw as $staff) {
 		'full_name' => $staff['full_name'],
 		'contact_number' => $staff['contact_number'],
 		'delivery_count' => (int)$staff['delivery_count'],
-		'monthly_salary' => (float)$staff['monthly_salary'],
+		'monthly_salary' => $salary_amount,
         'payment_frequency' => $staff['payment_frequency'],
-		'payment_id' => $payment['id'] ?? null,
-		'payment_date' => $payment['payment_date'] ?? null,
+		'payment_id' => $last_payment_id,
+		'payment_date' => $last_payment_date,
 		'status' => $status,
-		'salary_amount' => $salary_amount
+		'total_paid' => $total_paid
 	];
 }
 ?>
@@ -425,49 +486,39 @@ foreach ($staff_raw as $staff) {
 										<span class="text-xs text-slate-400">LKR</span>
 										<input type="number" 
 											class="w-24 bg-transparent outline-none py-1 text-slate-900 font-black" 
-											value="<?php echo htmlspecialchars($row['salary_amount']); ?>"
+											value="<?php echo htmlspecialchars($row['monthly_salary']); ?>"
 											onchange="updateSalary(<?php echo (int)$row['id']; ?>, this.value, this)"
 										>
 										<i class="fa-solid fa-pen text-[10px] text-slate-300 group-focus-within:text-indigo-500 transition-colors"></i>
 									</div>
 								</td>
-								<td class="px-4 py-3 font-semibold text-slate-700"><?php echo $row['payment_date'] ? htmlspecialchars($row['payment_date']) : 'Pending'; ?></td>
+								<td class="px-4 py-3 font-semibold text-slate-700">
+                                    <?php if ($row['status'] !== 'nonpaid'): ?>
+                                        <div class="text-xs">
+                                            <span class="block text-[10px] uppercase text-slate-400 tracking-widest">Last Paid: <?php echo $row['payment_date'] ? htmlspecialchars($row['payment_date']) : 'Pending'; ?></span>
+                                            <span class="font-black text-slate-900">Total: LKR <?php echo number_format($row['total_paid'], 2); ?></span>
+                                        </div>
+                                    <?php else: ?>
+                                        Pending
+                                    <?php endif; ?>
+                                </td>
 								<td class="px-4 py-3">
 									<?php if ($row['status'] === 'paid'): ?>
 										<span class="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-emerald-100 text-emerald-700 border border-emerald-200">Paid</span>
-									<?php else: ?>
+									<?php elseif ($row['status'] === 'partial'): ?>
+										<span class="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-amber-100 text-amber-700 border border-amber-200">Partial</span>
+                                    <?php else: ?>
 										<span class="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-rose-100 text-rose-700 border border-rose-200">Non Paid</span>
 									<?php endif; ?>
 								</td>
 								<td class="px-4 py-3">
 									<div class="flex flex-wrap gap-2">
-										<?php if ($row['status'] !== 'paid'): ?>
-											<button type="button"
-												class="open-pay-modal px-3 py-1.5 rounded-lg bg-rose-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-rose-700"
-												data-employee-id="<?php echo (int)$row['id']; ?>"
-												data-employee-name="<?php echo htmlspecialchars($row['full_name']); ?>"
-												data-salary-amount="<?php echo (float)$row['salary_amount']; ?>">
-												Pay
-											</button>
-										<?php else: ?>
-											<span class="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[10px] font-black uppercase tracking-widest">Paid</span>
-										<?php endif; ?>
-
-										<?php if (!empty($row['payment_id'])): ?>
-											<button type="button"
-												class="open-status-modal px-3 py-1.5 rounded-lg bg-amber-500 text-white text-[10px] font-black uppercase tracking-widest hover:bg-amber-600"
-												data-payment-id="<?php echo (int)$row['payment_id']; ?>"
-												data-current-status="<?php echo htmlspecialchars($row['status']); ?>"
-												data-payment-date="<?php echo htmlspecialchars($row['payment_date'] ?: date('Y-m-d')); ?>">
-												Edit
-											</button>
-
-											<form method="POST" onsubmit="return confirm('Delete this payment record?');" class="inline">
-												<input type="hidden" name="salary_action" value="delete_payment">
-												<input type="hidden" name="payment_id" value="<?php echo (int)$row['payment_id']; ?>">
-												<button type="submit" class="px-3 py-1.5 rounded-lg bg-slate-700 text-white text-[10px] font-black uppercase tracking-widest hover:bg-slate-900">Delete</button>
-											</form>
-										<?php endif; ?>
+                                        <button type="button"
+                                            class="open-pay-modal px-3 py-1.5 rounded-lg text-white text-[10px] font-black uppercase tracking-widest hover:opacity-90 <?php echo $row['status'] === 'paid' ? 'bg-slate-700' : 'bg-rose-600'; ?>"
+                                            data-employee-id="<?php echo (int)$row['id']; ?>"
+                                            data-employee-name="<?php echo htmlspecialchars($row['full_name']); ?>">
+                                            <?php echo $row['status'] === 'paid' ? 'History' : 'Pay'; ?>
+                                        </button>
 									</div>
 								</td>
 							</tr>
@@ -483,27 +534,42 @@ foreach ($staff_raw as $staff) {
 		</div>
 
 		<div id="paySalaryModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 px-4">
-			<div class="w-full max-w-md glass-card p-6">
+			<div class="w-full max-w-md glass-card p-6 border border-white/40 shadow-2xl">
 				<div class="flex items-center justify-between mb-5">
-					<h4 class="text-lg font-black text-slate-900 font-['Outfit']">Pay Staff Salary</h4>
+					<h4 class="text-lg font-black text-slate-900 font-['Outfit'] flex items-center">
+                        <span id="payModalTitle">Pay Staff Salary</span>
+                        <span id="payFrequencyBadge" class="ml-3 text-[9px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md uppercase tracking-widest border border-slate-200"></span>
+                    </h4>
 					<button type="button" class="close-modal text-slate-500 hover:text-slate-800"><i class="fa-solid fa-xmark text-lg"></i></button>
 				</div>
-				<form method="POST" class="space-y-4">
+                
+                <div class="mb-5 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                    <div class="flex justify-between items-center mb-2 pb-2 border-b border-slate-200">
+                        <h5 class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Payment History</h5>
+                        <span class="text-xs font-bold text-slate-600">Salary Rate: <span class="text-slate-900" id="payTotalSalary">0.00</span></span>
+                    </div>
+                    <div id="payHistoryList" class="max-h-32 overflow-y-auto pr-2 space-y-1 mb-2">
+                        <div class="text-[10px] uppercase font-black tracking-widest text-slate-400 py-3 text-center">Loading...</div>
+                    </div>
+                    <div class="pt-2 border-t border-slate-200 flex justify-between items-center">
+                        <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest">Remaining To Pay</span>
+                        <span class="text-sm font-black text-rose-600">LKR <span id="payRemainingText">0.00</span></span>
+                    </div>
+                </div>
+
+				<form method="POST" class="space-y-4" id="paySalaryForm">
 					<input type="hidden" name="salary_action" value="pay_salary">
 					<input type="hidden" name="employee_id" id="payEmployeeId" value="">
 
 					<div>
 						<label class="text-[10px] uppercase font-black text-slate-400 mb-2 ml-1 block tracking-widest">Employee</label>
-						<input type="text" id="payEmployeeName" class="w-full input-glass" readonly>
+						<input type="text" id="payEmployeeName" class="w-full input-glass bg-slate-50/50" readonly>
 					</div>
-					<div>
-						<label class="text-[10px] uppercase font-black text-slate-400 mb-2 ml-1 block tracking-widest">Salary Amount</label>
-						<input type="number" min="0" step="0.01" name="salary_amount" id="paySalaryAmount" class="w-full input-glass" required>
-					</div>
+					
 					<div class="grid grid-cols-2 gap-3">
 						<div>
 							<label class="text-[10px] uppercase font-black text-slate-400 mb-2 ml-1 block tracking-widest">Month</label>
-							<select name="salary_month" id="paySalaryMonth" class="w-full input-glass">
+							<select name="salary_month" id="paySalaryMonth" class="w-full input-glass" onchange="fetchPaymentHistory()">
 								<?php for($pm=1; $pm<=12; $pm++): ?>
 									<option value="<?php echo $pm; ?>" <?php echo $salary_month === $pm ? 'selected' : ''; ?>>
 										<?php echo date('F', mktime(0, 0, 0, $pm, 1)); ?>
@@ -513,18 +579,25 @@ foreach ($staff_raw as $staff) {
 						</div>
 						<div>
 							<label class="text-[10px] uppercase font-black text-slate-400 mb-2 ml-1 block tracking-widest">Year</label>
-							<select name="salary_year" id="paySalaryYear" class="w-full input-glass">
+							<select name="salary_year" id="paySalaryYear" class="w-full input-glass" onchange="fetchPaymentHistory()">
 								<?php for($py=date('Y'); $py>=2024; $py--): ?>
 									<option value="<?php echo $py; ?>" <?php echo $salary_year === $py ? 'selected' : ''; ?>><?php echo $py; ?></option>
 								<?php endfor; ?>
 							</select>
 						</div>
 					</div>
-					<div>
-						<label class="text-[10px] uppercase font-black text-slate-400 mb-2 ml-1 block tracking-widest">Payment Date</label>
-						<input type="date" name="payment_date" class="w-full input-glass" value="<?php echo date('Y-m-d'); ?>" required>
-					</div>
-					<button type="submit" class="w-full h-11 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-black uppercase tracking-widest">Pay Now</button>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="text-[10px] uppercase font-black text-rose-400 mb-2 ml-1 block tracking-widest">Amount to Pay (LKR)</label>
+                            <input type="number" min="0.01" step="0.01" name="salary_amount" id="paySalaryAmount" class="w-full input-glass border-rose-200 focus:border-rose-400" required>
+                        </div>
+                        <div>
+                            <label class="text-[10px] uppercase font-black text-slate-400 mb-2 ml-1 block tracking-widest">Payment Date</label>
+                            <input type="date" name="payment_date" class="w-full input-glass" value="<?php echo date('Y-m-d'); ?>" required>
+                        </div>
+                    </div>
+					<button type="submit" class="w-full h-11 mt-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-black uppercase tracking-widest shadow-md">Add Payment</button>
 				</form>
 			</div>
 		</div>
@@ -678,7 +751,6 @@ foreach ($staff_raw as $staff) {
 		const editPaymentDate = document.getElementById('editPaymentDate');
 
 		const openPayButtons = document.querySelectorAll('.open-pay-modal');
-		const openStatusButtons = document.querySelectorAll('.open-status-modal');
 		const closeButtons = document.querySelectorAll('.close-modal');
 
 		function openModal(modal) {
@@ -693,40 +765,71 @@ foreach ($staff_raw as $staff) {
 			modal.classList.remove('flex');
 		}
 
-		openPayButtons.forEach((btn) => {
-			btn.addEventListener('click', () => {
-				payEmployeeId.value = btn.dataset.employeeId;
-				payEmployeeName.value = btn.dataset.employeeName;
-				paySalaryAmount.value = Number(btn.dataset.salaryAmount || 0).toFixed(2);
-				paySalaryMonth.value = '<?php echo (int)$salary_month; ?>';
-				paySalaryYear.value = '<?php echo (int)$salary_year; ?>';
-				openModal(paySalaryModal);
-			});
-		});
-
-		openStatusButtons.forEach((btn) => {
-			btn.addEventListener('click', () => {
-				editPaymentId.value = btn.dataset.paymentId;
-				editNewStatus.value = btn.dataset.currentStatus;
-				editPaymentDate.value = btn.dataset.paymentDate || '<?php echo date('Y-m-d'); ?>';
-				openModal(editStatusModal);
-			});
-		});
-
 		closeButtons.forEach((btn) => {
 			btn.addEventListener('click', () => {
 				closeModal(paySalaryModal);
-				closeModal(editStatusModal);
                 closeModal(document.getElementById('addStaffModal'));
 			});
 		});
 
-		[paySalaryModal, editStatusModal, document.getElementById('addStaffModal')].forEach((modal) => {
+		[paySalaryModal, document.getElementById('addStaffModal')].forEach((modal) => {
 			if (!modal) return;
 			modal.addEventListener('click', (e) => {
 				if (e.target === modal) {
 					closeModal(modal);
 				}
+			});
+		});
+
+        function fetchPaymentHistory() {
+            const employeeId = payEmployeeId.value;
+            const month = paySalaryMonth.value;
+            const year = paySalaryYear.value;
+
+            if (!employeeId) return;
+
+            payHistoryList.innerHTML = '<div class="text-[10px] uppercase font-black tracking-widest text-slate-400 py-3 text-center">Loading history...</div>';
+
+            fetch('salary.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                    'salary_action': 'get_payment_history',
+                    'employee_id': employeeId,
+                    'salary_month': month,
+                    'salary_year': year
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if(data.success) {
+                    document.getElementById('payFrequencyBadge').innerText = data.frequency;
+                    document.getElementById('payTotalSalary').innerText = Number(data.total_salary).toFixed(2);
+                    document.getElementById('payRemainingText').innerText = Number(data.remaining).toFixed(2);
+                    paySalaryAmount.value = Number(data.remaining).toFixed(2);
+                    payHistoryList.innerHTML = data.history_html;
+                    paySalaryAmount.max = data.remaining;
+                    if (data.remaining <= 0) {
+                        paySalaryAmount.value = 0;
+                    }
+                }
+            })
+            .catch(err => {
+                console.error(err);
+                payHistoryList.innerHTML = '<div class="text-[10px] uppercase font-black tracking-widest text-rose-400 py-3 text-center">Error loading history</div>';
+            });
+        }
+
+        openPayButtons.forEach((btn) => {
+			btn.addEventListener('click', () => {
+				payEmployeeId.value = btn.dataset.employeeId;
+				payEmployeeName.value = btn.dataset.employeeName;
+				paySalaryMonth.value = '<?php echo (int)$salary_month; ?>';
+				paySalaryYear.value = '<?php echo (int)$salary_year; ?>';
+				
+                fetchPaymentHistory();
+
+                openModal(paySalaryModal);
 			});
 		});
 	</script>
