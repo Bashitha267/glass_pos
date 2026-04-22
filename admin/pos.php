@@ -326,12 +326,9 @@ if ($action === 'delete_pos_sale') {
             </div>
         </div>
         <div class="flex items-center gap-3">
-            <a href="pos_sales_history.php" class="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2.5 rounded-xl font-bold text-[10px] uppercase tracking-widest transition-all flex items-center gap-2">
+            <a href="pos_sales_history.php" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold text-[11px] uppercase tracking-widest transition-all shadow-lg shadow-indigo-600/20 flex items-center gap-2">
                 <i class="fa-solid fa-clock-rotate-left"></i><span class="hidden sm:inline">History</span>
             </a>
-            <button onclick="newSale()" class="bg-slate-900 hover:bg-black text-white px-4 md:px-6 py-2.5 rounded-xl font-bold text-[10px] uppercase tracking-widest transition-all shadow-xl flex items-center gap-2">
-                <i class="fa-solid fa-plus text-[10px]"></i><span>Create New</span>
-            </button>
         </div>
     </div>
 </header>
