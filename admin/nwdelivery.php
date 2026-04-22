@@ -1440,7 +1440,7 @@ $deliveries = $stmt->fetchAll();
                     <div class="grid grid-cols-12 gap-2 md:gap-2 items-center">
                         <div class="col-span-12 md:col-span-3 relative">
                             <input type="text" placeholder="Product..." class="input-glass w-full h-[36px] text-[11px] font-bold item-search" onkeyup="searchBrands(this.value, '${id}')" onfocus="searchBrands(this.value, '${id}')">
-                            <div class="brand-results hidden absolute w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-[100] p-1"></div>
+                            <div class="brand-results hidden absolute md:w-[750px] w-full mt-1 bg-white border border-slate-200 rounded-2xl shadow-2xl z-[100] p-1.5 animate-[fadeIn_0.2s_ease]"></div>
                             <input type="hidden" class="item-id">
                             <input type="hidden" class="item-source" value="container">
                             <input type="hidden" class="cost-price">
@@ -1509,18 +1509,49 @@ $deliveries = $stmt->fetchAll();
                 .then(data => {
                     let html = '';
                     if(!term && data.length > 0) {
-                        html += '<p class="px-2 py-1.5 text-[8px] font-black text-slate-400 uppercase tracking-widest bg-slate-50 mb-1 rounded">Stock Recommendations</p>';
+                        html += '<div class="px-4 py-2 bg-slate-50/80 backdrop-blur-sm mb-2 rounded-xl flex items-center justify-between border border-slate-100">';
+                        html += '<span class="text-[9px] font-black text-slate-500 uppercase tracking-[0.2em]">Stock Recommendations</span>';
+                        html += '<span class="text-[8px] font-bold text-slate-400 tracking-widest uppercase">Select an item to add</span>';
+                        html += '</div>';
                     }
                     data.forEach(b => {
-                        html += `<div class="p-2 hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-0" onmousedown="selectBrand('${itemId}', ${b.item_id}, '${b.brand_name}', ${b.available_qty}, ${b.per_item_cost}, '${b.item_source}', ${b.per_sheet_cost}, ${b.square_feet})">
-                            <div class="flex justify-between items-center mb-1">
-                                <span class="text-xs font-black text-slate-800">${b.brand_name}</span>
-                                <span class="text-[9px] bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded font-black">${b.available_qty} PKTS | ${parseFloat(b.square_feet).toFixed(2)} SQFT</span>
-                            </div>
-                            <div class="flex items-center gap-2">
-                                <span class="text-[8px] text-slate-400 uppercase font-bold bg-slate-100 px-1 rounded">${b.container_number}</span>
-                                <span class="text-[8px] text-slate-400 uppercase font-bold bg-slate-100 px-1 rounded">${b.country}</span>
-                                <span class="text-[8px] text-indigo-500 font-black ml-auto">LKR ${b.per_item_cost} / SQFT | LKR ${b.per_sheet_cost} / SHEET</span>
+                        html += `
+                        <div class="py-1 px-4 hover:bg-indigo-50/50 cursor-pointer border-b border-slate-50 last:border-0 transition-all rounded-lg group/item" onmousedown="selectBrand('${itemId}', ${b.item_id}, '${b.brand_name}', ${b.available_qty}, ${b.per_item_cost}, '${b.item_source}', ${b.per_sheet_cost}, ${b.square_feet})">
+                            <div class="flex flex-col md:flex-row md:items-center justify-between gap-2 md:gap-4">
+                                <!-- Product Name -->
+                                <div class="shrink-0">
+                                    <span class="text-[11px] font-black text-slate-800 uppercase tracking-tight group-hover/item:text-indigo-600 transition-colors whitespace-nowrap">${b.brand_name}</span>
+                                </div>
+
+                                <!-- Source Info -->
+                                <div class="flex items-center gap-1.5 shrink-0">
+                                    <span class="text-[8px] text-slate-400 font-bold bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100 uppercase whitespace-nowrap">${b.container_number}</span>
+                                    <span class="text-[8px] text-slate-400 font-bold bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100 uppercase whitespace-nowrap">${b.country}</span>
+                                </div>
+
+                                <!-- Stock Info -->
+                                <div class="flex items-center gap-5 border-l border-slate-100 pl-4 shrink-0">
+                                    <div class="text-left whitespace-nowrap">
+                                        <p class="text-[7px] uppercase font-black text-slate-400 leading-none mb-0.5">Available</p>
+                                        <p class="text-[10px] font-black text-emerald-600 leading-none">${b.available_qty} PKTS</p>
+                                    </div>
+                                    <div class="text-left whitespace-nowrap">
+                                        <p class="text-[7px] uppercase font-black text-slate-400 leading-none mb-0.5">Total SQFT</p>
+                                        <p class="text-[10px] font-black text-indigo-600 leading-none">${parseFloat(b.square_feet).toFixed(2)} FT²</p>
+                                    </div>
+                                </div>
+
+                                <!-- Pricing Info -->
+                                <div class="flex items-center gap-5 border-l border-slate-100 pl-4 flex-1 justify-end">
+                                    <div class="text-right whitespace-nowrap">
+                                        <p class="text-[7px] uppercase font-black text-slate-400 leading-none mb-0.5">Rs. / SQFT</p>
+                                        <p class="text-[10px] font-black text-slate-700 leading-none">LKR ${parseFloat(b.per_item_cost).toLocaleString()}</p>
+                                    </div>
+                                    <div class="text-right whitespace-nowrap">
+                                        <p class="text-[7px] uppercase font-black text-slate-400 leading-none mb-0.5">Rs. / Sheet</p>
+                                        <p class="text-[10px] font-black text-indigo-600 leading-none">LKR ${parseFloat(b.per_sheet_cost).toLocaleString()}</p>
+                                    </div>
+                                </div>
                             </div>
                         </div>`;
                     });
