@@ -37,6 +37,7 @@ if ($action == 'search_brand_stock') {
         SELECT b.id as brand_id, b.name as brand_name, 
                ci.id as item_id, ci.total_qty, ci.sold_qty, (ci.total_qty - ci.sold_qty) as available_qty,
                c.container_number, c.country, c.arrival_date, c.per_item_cost as per_item_cost,
+               c.per_sheet_cost, ci.square_feet,
                'container' as item_source
         FROM container_items ci
         JOIN brands b ON ci.brand_id = b.id
@@ -53,6 +54,7 @@ if ($action == 'search_brand_stock') {
         SELECT 0 as brand_id, opi.item_name as brand_name,
                opi.id as item_id, opi.qty as total_qty, opi.sold_qty, (opi.qty - opi.sold_qty) as available_qty,
                op.purchase_number as container_number, 'Direct' as country, op.purchase_date as arrival_date, opi.price_per_item as per_item_cost,
+               opi.price_per_item as per_sheet_cost, opi.square_feet,
                'other' as item_source
         FROM other_purchase_items opi
         JOIN other_purchases op ON opi.purchase_id = op.id
@@ -1343,7 +1345,7 @@ $deliveries = $stmt->fetchAll();
                         
                         <div class="hidden md:grid grid-cols-12 gap-2 px-1 mb-1">
                             <div class="col-span-4"><span class="text-[8px] uppercase font-black text-slate-400 tracking-wider">Product</span></div>
-                            <div class="col-span-1"><span class="text-[8px] uppercase font-black text-slate-400 tracking-wider">Qty</span></div>
+                            <div class="col-span-1"><span class="text-[8px] uppercase font-black text-slate-400 tracking-wider">Sheets Qty</span></div>
                             <div class="col-span-2"><span class="text-[8px] uppercase font-black text-slate-400 tracking-wider">Selling</span></div>
                             <div class="col-span-2"><span class="text-[8px] uppercase font-black text-red-600 tracking-wider">Damaged</span></div>
                             <div class="col-span-2"><span class="text-[8px] uppercase font-black text-slate-400 tracking-wider">Discount</span></div>
@@ -1442,10 +1444,12 @@ $deliveries = $stmt->fetchAll();
                             <input type="hidden" class="item-id">
                             <input type="hidden" class="item-source" value="container">
                             <input type="hidden" class="cost-price">
+                            <input type="hidden" class="sheet-cost">
+                            <input type="hidden" class="item-sqft">
                             <input type="hidden" class="max-qty">
                         </div>
                         <div class="col-span-3 md:col-span-2">
-                            <input type="number" placeholder="Qty" class="input-glass w-full h-[36px] text-xs font-bold item-qty" onkeyup="calculateTotals()">
+                            <input type="number" placeholder="Sheets Qty" class="input-glass w-full h-[36px] text-xs font-bold item-qty" onkeyup="calculateTotals()">
                         </div>
                         <div class="col-span-3 md:col-span-2">
                             <input type="number" placeholder="0.00" class="input-glass w-full h-[36px] text-xs font-bold item-price" onkeyup="calculateTotals()">
@@ -1463,6 +1467,7 @@ $deliveries = $stmt->fetchAll();
                     <div class="stock-info px-2 hidden flex items-center gap-2">
                         <span class="text-[8px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100/30"></span>
                         <span class="text-[8px] font-black text-amber-600 uppercase tracking-widest bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100/30"></span>
+                        <span class="text-[8px] font-black text-indigo-600 uppercase tracking-widest bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100/30"></span>
                     </div>
                 </div>
             `;
@@ -1470,20 +1475,23 @@ $deliveries = $stmt->fetchAll();
             return id;
         }
 
-        function selectBrand(itemId, id, name, qty, cost, source = 'container') {
+        function selectBrand(itemId, id, name, qty, cost, source = 'container', sheetCost = 0, sqft = 0) {
             const row = document.getElementById(`item-${itemId}`);
             row.querySelector('.item-id').value = id;
             row.querySelector('.item-source').value = source;
             row.querySelector('.item-search').value = `${name} (Stock: ${qty})`;
             row.querySelector('.cost-price').value = cost;
+            row.querySelector('.sheet-cost').value = sheetCost;
+            row.querySelector('.item-sqft').value = sqft;
             row.querySelector('.max-qty').value = qty;
             
             const stockDiv = row.querySelector('.stock-info');
             if(stockDiv) {
                 const badges = stockDiv.querySelectorAll('span');
-                if(badges.length >= 2) {
+                if(badges.length >= 3) {
                     badges[0].innerHTML = `<i class="fa-solid fa-box-archive mr-1"></i> Stock: ${qty} PKTS`;
-                    badges[1].innerHTML = `<i class="fa-solid fa-coins mr-1"></i> Unit Cost: LKR ${cost}`;
+                    badges[1].innerHTML = `<i class="fa-solid fa-expand mr-1"></i> ${parseFloat(row.querySelector('.item-sqft')?.value || 0).toFixed(3)} SQFT`;
+                    badges[2].innerHTML = `<i class="fa-solid fa-coins mr-1"></i> Cost: LKR ${cost} (SQFT) | LKR ${row.querySelector('.sheet-cost')?.value || 0} (Sheet)`;
                     stockDiv.classList.remove('hidden');
                 }
             }
@@ -1504,15 +1512,15 @@ $deliveries = $stmt->fetchAll();
                         html += '<p class="px-2 py-1.5 text-[8px] font-black text-slate-400 uppercase tracking-widest bg-slate-50 mb-1 rounded">Stock Recommendations</p>';
                     }
                     data.forEach(b => {
-                        html += `<div class="p-2 hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-0" onmousedown="selectBrand('${itemId}', ${b.item_id}, '${b.brand_name}', ${b.available_qty}, ${b.per_item_cost}, '${b.item_source}')">
+                        html += `<div class="p-2 hover:bg-slate-50 cursor-pointer border-b border-slate-50 last:border-0" onmousedown="selectBrand('${itemId}', ${b.item_id}, '${b.brand_name}', ${b.available_qty}, ${b.per_item_cost}, '${b.item_source}', ${b.per_sheet_cost}, ${b.square_feet})">
                             <div class="flex justify-between items-center mb-1">
                                 <span class="text-xs font-black text-slate-800">${b.brand_name}</span>
-                                <span class="text-[9px] bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded font-black">${b.available_qty} PKTS</span>
+                                <span class="text-[9px] bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded font-black">${b.available_qty} PKTS | ${parseFloat(b.square_feet).toFixed(2)} SQFT</span>
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-[8px] text-slate-400 uppercase font-bold bg-slate-100 px-1 rounded">${b.container_number}</span>
                                 <span class="text-[8px] text-slate-400 uppercase font-bold bg-slate-100 px-1 rounded">${b.country}</span>
-                                <span class="text-[8px] text-indigo-500 font-black ml-auto">LKR ${b.per_item_cost} / UNIT</span>
+                                <span class="text-[8px] text-indigo-500 font-black ml-auto">LKR ${b.per_item_cost} / SQFT | LKR ${b.per_sheet_cost} / SHEET</span>
                             </div>
                         </div>`;
                     });

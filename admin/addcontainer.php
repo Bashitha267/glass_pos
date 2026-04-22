@@ -288,12 +288,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $net_qty = $total_qty - $damaged_qty;
         
         // Use total square feet for unit cost if provided, otherwise fallback to net_qty
+        $per_sheet_cost = ($net_qty > 0) ? ($total_expenses / $net_qty) : 0;
         if ($total_sqft > 0) {
             $avg_sqft = $total_qty > 0 ? ($total_sqft / $total_qty) : 0;
             $net_sqft = $total_sqft - ($damaged_qty * $avg_sqft);
             $per_item_cost = ($net_sqft > 0) ? ($total_expenses / $net_sqft) : 0;
         } else {
-            $per_item_cost = ($net_qty > 0) ? ($total_expenses / $net_qty) : 0;
+            $per_item_cost = $per_sheet_cost;
         }
 
         // 2. Fetch Old Data for Ledger if exists (Include all columns to be compared)
@@ -302,8 +303,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         $old_container = $stmt->fetch(PDO::FETCH_ASSOC);
 
         // 3. Insert/Update Container
-        $stmt = $pdo->prepare("INSERT INTO containers (container_number, arrival_date, added_by, total_expenses, container_cost, total_qty, damaged_qty, per_item_cost, country) 
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) 
+        $stmt = $pdo->prepare("INSERT INTO containers (container_number, arrival_date, added_by, total_expenses, container_cost, total_qty, damaged_qty, per_item_cost, per_sheet_cost, country) 
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
                                ON DUPLICATE KEY UPDATE 
                                arrival_date = VALUES(arrival_date),
                                total_expenses = VALUES(total_expenses),
@@ -311,8 +312,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                                total_qty = VALUES(total_qty),
                                damaged_qty = VALUES(damaged_qty),
                                per_item_cost = VALUES(per_item_cost),
+                               per_sheet_cost = VALUES(per_sheet_cost),
                                country = VALUES(country)");
-        $stmt->execute([$container_no, $arrival_date, $user_id, $total_expenses, $container_cost, $total_qty, $damaged_qty, $per_item_cost, $country]);
+        $stmt->execute([$container_no, $arrival_date, $user_id, $total_expenses, $container_cost, $total_qty, $damaged_qty, $per_item_cost, $per_sheet_cost, $country]);
 
         if ($old_container) {
             $container_id = $old_container['id'];
@@ -378,9 +380,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             $qty_per_pallet = (int) $item['qty_per_pallet'];
             $square_feet = (float) ($item['square_feet'] ?? 0);
             $line_total = $pallets * $qty_per_pallet;
+            $line_total_sqft = $line_total * $square_feet;
 
-            $stmt = $pdo->prepare("INSERT INTO container_items (container_id, brand_id, pallets, qty_per_pallet, square_feet, total_qty) VALUES (?, ?, ?, ?, ?, ?)");
-            $stmt->execute([$container_id, $brand_id, $pallets, $qty_per_pallet, $square_feet, $line_total]);
+            $stmt = $pdo->prepare("INSERT INTO container_items (container_id, brand_id, pallets, qty_per_pallet, square_feet, total_qty, total_sqft) VALUES (?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$container_id, $brand_id, $pallets, $qty_per_pallet, $square_feet, $line_total, $line_total_sqft]);
         }
 
         // 4. Handle Expenses
@@ -993,7 +996,7 @@ if ($current_tab === 'other') {
                                 Add Item</button>
                         </div>
                         <div id="items-list-header"
-                            class="hidden lg:grid grid-cols-6 gap-3 px-4 py-2 mb-2 bg-slate-100 rounded-lg border border-slate-200">
+                            class="hidden lg:grid grid-cols-7 gap-3 px-4 py-2 mb-2 bg-slate-100 rounded-lg border border-slate-200">
                             <span
                                 class="text-[10px] uppercase font-bold text-slate-600 tracking-widest col-span-2">Brand
                                 Name</span>
@@ -1002,7 +1005,9 @@ if ($current_tab === 'other') {
                                 Pallet</span>
                             <span class="text-[10px] uppercase font-bold text-slate-600 tracking-widest">Square Feet</span>
                             <span
-                                class="text-[10px] uppercase font-bold text-slate-600 tracking-widest text-center">Total</span>
+                                class="text-[10px] uppercase font-bold text-slate-600 tracking-widest text-center">Total Sheets</span>
+                            <span
+                                class="text-[10px] uppercase font-bold text-slate-600 tracking-widest text-center">Total Sqft</span>
                         </div>
                         <div id="items-list" class="space-y-3">
                             <!-- Dynamic Item Rows -->
@@ -1090,9 +1095,13 @@ if ($current_tab === 'other') {
                                     Balance Due</p>
                                 <p id="disp-balance-due" class="text-base font-bold text-rose-600">Rs. 0</p>
                             </div>
-                            <div class="text-center px-4 flex-1">
+                            <div class="text-center border-r border-slate-200 px-4 flex-1">
                                 <p class="text-[9px] uppercase font-bold text-cyan-600 mb-1">Unit Cost (Sqft)</p>
                                 <p id="disp-per-item-cost" class="text-base font-bold text-cyan-600">Rs. 0</p>
+                            </div>
+                            <div class="text-center px-4 flex-1">
+                                <p class="text-[9px] uppercase font-bold text-indigo-600 mb-1">Unit Cost (Sheet)</p>
+                                <p id="disp-per-sheet-cost" class="text-base font-bold text-indigo-600">Rs. 0</p>
                             </div>
                         </div>
                     </div>
@@ -1285,7 +1294,7 @@ if ($current_tab === 'other') {
         function addItemRow(data = null) {
             const rowId = Date.now() + Math.random();
             const html = `
-                <div class="item-row grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 bg-white/40 p-4 rounded-xl border border-slate-200/60 relative group shadow-sm" id="item_${rowId}">
+                <div class="item-row grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3 bg-white/40 p-4 rounded-xl border border-slate-200/60 relative group shadow-sm" id="item_${rowId}">
                     <div class="sm:col-span-2 lg:col-span-2 relative">
                         <label class="text-[9px] uppercase font-bold text-slate-400 mb-1 lg:hidden block">Brand Name</label>
                         <input type="text" placeholder="e.g. 18mm, 15mm" class="brand-input input-glass w-full" oninput="suggestBrands(this)" autocomplete="off" value="${data ? data.brand_name : ''}" ${currentMode === 'view' ? 'disabled' : ''}>
@@ -1304,8 +1313,12 @@ if ($current_tab === 'other') {
                         <input type="number" step="0.001" placeholder="0.00" class="input-glass sqft-input w-full" oninput="calculateTotals()" required value="${data ? data.square_feet : ''}" ${currentMode === 'view' ? 'disabled' : ''}>
                     </div>
                     <div class="flex flex-row sm:flex-col lg:flex-col justify-between sm:justify-center items-center h-full bg-slate-50 p-2 sm:p-0 rounded-lg border border-slate-100">
-                        <span class="text-[8px] uppercase text-slate-400 font-bold">Row Total</span>
+                        <span class="text-[8px] uppercase text-slate-400 font-bold">Total Sheets</span>
                         <span class="row-total-qty font-bold text-sm text-cyan-600">${data ? (data.pallets * data.qty_per_pallet).toLocaleString() : '0'}</span>
+                    </div>
+                    <div class="flex flex-row sm:flex-col lg:flex-col justify-between sm:justify-center items-center h-full bg-slate-50 p-2 sm:p-0 rounded-lg border border-slate-100">
+                        <span class="text-[8px] uppercase text-slate-400 font-bold">Total Sqft</span>
+                        <span class="row-total-sqft font-bold text-sm text-indigo-600">${data ? (data.pallets * data.qty_per_pallet * data.square_feet).toLocaleString(undefined, {minimumFractionDigits: 2}) : '0.00'}</span>
                     </div>
                     ${currentMode !== 'view' ? `
                     <button type="button" onclick="removeRow('item_${rowId}')" class="absolute -right-2 -top-2 bg-rose-500 text-white w-7 h-7 rounded-full text-xs items-center justify-center shadow-lg opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex z-10 transition-all hover:scale-110">
@@ -1475,13 +1488,17 @@ if ($current_tab === 'other') {
                 const q = parseInt(row.querySelector('.qty-input').value || 0);
                 const s = parseFloat(row.querySelector('.sqft-input').value || 0);
                 const rowTotal = p * q;
+                const rowTotalSqft = rowTotal * s;
                 row.querySelector('.row-total-qty').innerText = rowTotal.toLocaleString();
+                row.querySelector('.row-total-sqft').innerText = rowTotalSqft.toLocaleString(undefined, { minimumFractionDigits: 2 });
                 totalQty += rowTotal;
-                totalSqft += rowTotal * s;
+                totalSqft += rowTotalSqft;
             });
 
             const damagedQty = parseInt(document.getElementById('damaged_qty').value || 0);
             const netQty = totalQty - damagedQty;
+            
+            const perSheetCost = (netQty > 0) ? (totalExpenses / netQty) : 0;
             
             let perItemCost = 0;
             if (totalSqft > 0) {
@@ -1489,7 +1506,7 @@ if ($current_tab === 'other') {
                 const netSqft = totalSqft - (damagedQty * avgSqft);
                 perItemCost = (netSqft > 0) ? (totalExpenses / netSqft) : 0;
             } else {
-                perItemCost = (netQty > 0) ? (totalExpenses / netQty) : 0;
+                perItemCost = perSheetCost;
             }
             
             const balanceDue = Math.max(0, totalExpenses - totalPaid);
@@ -1498,6 +1515,9 @@ if ($current_tab === 'other') {
             document.getElementById('pay-header-total').innerText = "Rs. " + totalExpenses.toLocaleString('en-US', { minimumFractionDigits: 2 });
             document.getElementById('disp-grand-total-qty').innerText = netQty.toLocaleString();
             document.getElementById('disp-per-item-cost').innerText = "Rs. " + perItemCost.toLocaleString('en-US', { minimumFractionDigits: 2 });
+            if (document.getElementById('disp-per-sheet-cost')) {
+                document.getElementById('disp-per-sheet-cost').innerText = "Rs. " + perSheetCost.toLocaleString('en-US', { minimumFractionDigits: 2 });
+            }
 
             const dispPaid = document.getElementById('disp-total-paid');
             const dispBalance = document.getElementById('disp-balance-due');
