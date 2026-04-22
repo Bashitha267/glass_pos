@@ -96,7 +96,7 @@ if ($action == 'get_items_for_shop') {
         $stmt->execute([$cost, $id]);
         $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } else {
-        $stmt = $pdo->prepare("SELECT id, item_name, qty as total_qty, sold_qty, square_feet, pallets, qty_per_pallet, price_per_sqft FROM other_purchase_items WHERE purchase_id = ? AND category = 'Glass'");
+        $stmt = $pdo->prepare("SELECT id, item_name, category, qty as total_qty, sold_qty, square_feet, pallets, qty_per_pallet, price_per_sqft FROM other_purchase_items WHERE purchase_id = ? AND category = 'Glass'");
         $stmt->execute([$id]);
         $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
@@ -585,6 +585,8 @@ if ($current_tab === 'other') {
               (SELECT price_per_item FROM other_purchase_items WHERE purchase_id = other_purchases.id LIMIT 1) as unit_cost_item,
               (SELECT COUNT(*) FROM other_purchase_items WHERE purchase_id = other_purchases.id AND category = 'Glass') as glass_count,
               (SELECT SUM(qty) FROM other_purchase_items WHERE purchase_id = other_purchases.id) as total_qty,
+              (SELECT SUM(qty - sold_qty) FROM other_purchase_items WHERE purchase_id = other_purchases.id) as main_stock_qty,
+              (SELECT SUM(COALESCE((SELECT full_sheets_qty FROM shop_inventory WHERE item_id = other_purchase_items.id AND item_source = 'other' LIMIT 1), 0)) FROM other_purchase_items WHERE purchase_id = other_purchases.id) as shop_stock_qty,
               (SELECT SUM((qty - sold_qty) + COALESCE((SELECT full_sheets_qty FROM shop_inventory WHERE item_id = other_purchase_items.id AND item_source = 'other' LIMIT 1), 0)) FROM other_purchase_items WHERE purchase_id = other_purchases.id) as available_qty,
               COALESCE((SELECT SUM(amount) FROM other_purchase_payments WHERE purchase_id = other_purchases.id), 0) as total_paid
               FROM other_purchases 
@@ -600,7 +602,8 @@ if ($current_tab === 'other') {
         $params[] = "%$search%";
     }
     
-    $where[] = "category != 'Other'";
+    // Show all items added to shop inventory regardless of category label
+    // $where[] = "category != 'Other'";
     $whereClause = $where ? "WHERE " . implode(" AND ", $where) : "";
 
     $countStmt = $pdo->prepare("SELECT COUNT(*) FROM shop_inventory $whereClause");
@@ -879,8 +882,8 @@ if ($current_tab === 'other') {
                                 <th class="px-3 py-4 font-black">Bill / Invoice</th>
                                 <th class="px-3 py-4 font-black">Date</th>
                                 <th class="px-3 py-4 font-black text-emerald-400">Unit Cost</th>
-                                <th class="px-3 py-4 font-black text-indigo-100">Total Qty</th>
-                                <th class="px-3 py-4 font-black text-white">Avl Qty</th>
+                                <th class="px-3 py-4 font-black text-indigo-100 uppercase tracking-wider">Main Stock</th>
+                                <th class="px-3 py-4 font-black text-white uppercase tracking-wider">Shop Stock</th>
                                 <th class="px-3 py-4 font-black text-indigo-100">Total</th>
                                 <th class="px-3 py-4 font-black text-emerald-400">Paid</th>
                                 <th class="px-3 py-4 font-black text-rose-400">Remain</th>
@@ -954,15 +957,20 @@ if ($current_tab === 'other') {
                                             Rs. <?php echo number_format($r['unit_cost_item'], 2); ?>
                                         <?php endif; ?>
                                     </td>
-                                    <td class="px-3 py-4 text-sm font-semibold text-slate-700">
-                                        <?php echo number_format($r['total_qty']); ?>
+                                    <td class="px-3 py-4">
+                                        <div class="flex flex-col">
+                                            <span class="text-sm font-black text-slate-800"><?php echo number_format($r['main_stock_qty']); ?></span>
+                                            <span class="text-[9px] text-slate-400 font-bold uppercase tracking-widest">Remaining</span>
+                                        </div>
                                     </td>
-                                    <td class="px-3 py-4 text-sm font-bold text-center">
-                                        <?php if ($r['available_qty'] <= 0): ?>
-                                            <span class="text-[12px] font-black text-rose-700 uppercase tracking-widest">Out
-                                                of Stock</span>
+                                    <td class="px-3 py-4">
+                                        <?php if ($r['shop_stock_qty'] <= 0): ?>
+                                            <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest italic opacity-50">None in Shop</span>
                                         <?php else: ?>
-                                            <span class="text-indigo-600"><?php echo number_format($r['available_qty']); ?></span>
+                                            <div class="flex flex-col">
+                                                <span class="text-sm font-black text-indigo-600"><?php echo number_format($r['shop_stock_qty']); ?></span>
+                                                <span class="text-[9px] text-indigo-400 font-bold uppercase tracking-widest">In Shop</span>
+                                            </div>
                                         <?php endif; ?>
                                     </td>
                                     <td class="px-3 py-4 text-sm font-bold text-slate-800">Rs.
@@ -1011,17 +1019,17 @@ if ($current_tab === 'other') {
                                         <?php echo date('Y-m-d', strtotime($r['created_at'])); ?>
                                     </td>
                                     <td class="px-3 py-4 text-sm font-semibold text-slate-700">
-                                        <?php echo number_format($r['total_sheets_added']); ?> <?php echo $r['category'] === 'Glass' ? 'Sheets' : 'Qty'; ?>
+                                        <?php echo ($r['category'] === 'Glass' || $r['sqft_per_sheet'] > 0) ? number_format($r['total_sheets_added']) . ' Sheets' : number_format($r['total_sheets_added']) . ' Qty'; ?>
                                     </td>
                                     <td class="px-3 py-4 text-sm font-bold text-indigo-600">
-                                        <?php echo number_format($r['full_sheets_qty']); ?> <?php echo $r['category'] === 'Glass' ? 'Sheets' : 'Qty'; ?>
+                                        <?php echo ($r['category'] === 'Glass' || $r['sqft_per_sheet'] > 0) ? number_format($r['full_sheets_qty']) . ' Sheets' : number_format($r['full_sheets_qty']) . ' Qty'; ?>
                                     </td>
                                     <td class="px-3 py-4 text-sm font-bold text-slate-800">
-                                        <?php echo $r['category'] === 'Glass' ? number_format($r['partial_sqft_qty'], 2) . ' SQFT' : '-'; ?>
+                                        <?php echo ($r['category'] === 'Glass' || $r['sqft_per_sheet'] > 0) ? number_format($r['partial_sqft_qty'], 3) . ' SQFT' : '-'; ?>
                                     </td>
                                     <td class="px-3 py-4 text-sm font-bold text-emerald-600">
                                         Rs. <?php echo number_format($r['selling_price_per_sqft'], 2); ?>
-                                        <span class="text-[10px] text-slate-400 font-bold uppercase tracking-widest ml-1"><?php echo $r['category'] === 'Glass' ? '/ SQFT' : '/ Qty'; ?></span>
+                                        <span class="text-[10px] text-slate-400 font-bold uppercase tracking-widest ml-1"><?php echo ($r['category'] === 'Glass' || $r['sqft_per_sheet'] > 0) ? '/ SQFT' : '/ Qty'; ?></span>
                                     </td>
                                     <td class="px-3 py-4 text-center">
                                         <button onclick="openShopSelectModal(<?php echo $r['item_id']; ?>, '<?php echo $r['item_source']; ?>')"
@@ -2563,7 +2571,7 @@ if ($current_tab === 'other') {
             
             if (itemData) {
                 brand = itemData.item_name;
-                category = source === 'container' ? 'Glass' : (itemData.category || 'Other');
+                category = itemData.category || (source === 'container' ? 'Glass' : 'Other');
                 sqftPerSheet = itemData.square_feet;
                 costSqft = itemData.price_per_sqft || 0;
             } else if (source === 'container') {
@@ -2726,8 +2734,16 @@ if ($current_tab === 'other') {
                     btn.disabled = false;
                     btn.innerText = 'Confirm Stock Transfer';
                     if (res.success) {
-                        alert("Stock successfully moved to Shop Inventory!");
-                        prepareShopModal(document.getElementById('shop_item_id').value, document.getElementById('shop_item_source').value, document.querySelector(`[onclick*="prepareShopModal(${document.getElementById('shop_item_id').value}"]`));
+                        // Refresh the background registry table
+                        if (typeof handleAjaxSearch === 'function') handleAjaxSearch();
+                        
+                        // Hide the transfer form and refresh the history
+                        document.getElementById('add-shop-form-container').classList.add('hidden');
+                        prepareShopModal(
+                            document.getElementById('shop_item_id').value, 
+                            document.getElementById('shop_item_source').value, 
+                            document.querySelector(`[onclick*="prepareShopModal(${document.getElementById('shop_item_id').value}"]`)
+                        );
                         addShopForm.reset();
                     } else {
                         alert(res.message);

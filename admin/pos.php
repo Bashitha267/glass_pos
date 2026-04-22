@@ -110,7 +110,12 @@ if ($action === 'save_pos_sale') {
             $old = $pdo->prepare("SELECT item_id, item_source, qty, total_sqft, sale_type, category, deduct_from FROM pos_sale_items WHERE sale_id=?");
             $old->execute([$editing_id]);
             foreach ($old->fetchAll() as $oi) {
-                if ($oi['category'] === 'Other') {
+                // Check if it's actually a glass item by looking at shop_inventory
+                $si_check = $pdo->prepare("SELECT sqft_per_sheet FROM shop_inventory WHERE item_id = ? AND item_source = ?");
+                $si_check->execute([$oi['item_id'], $oi['item_source']]);
+                $shopInfo = $si_check->fetch();
+
+                if ($oi['category'] === 'Other' && !($shopInfo && $shopInfo['sqft_per_sheet'] > 0)) {
                     $pdo->prepare("UPDATE shop_inventory SET full_sheets_qty = full_sheets_qty + ? WHERE item_id = ? AND item_source = ?")
                         ->execute([$oi['qty'], $oi['item_id'], $oi['item_source']]);
                 } else {
@@ -123,9 +128,6 @@ if ($action === 'save_pos_sale') {
                             $pdo->prepare("UPDATE shop_inventory SET partial_sqft_qty = partial_sqft_qty + ? WHERE item_id = ? AND item_source = ?")
                                 ->execute([$oi['total_sqft'], $oi['item_id'], $oi['item_source']]);
                         } else {
-                            $si = $pdo->prepare("SELECT sqft_per_sheet FROM shop_inventory WHERE item_id = ? AND item_source = ?");
-                            $si->execute([$oi['item_id'], $oi['item_source']]);
-                            $shopInfo = $si->fetch();
                             if ($shopInfo) {
                                 $leftover = max(0, $shopInfo['sqft_per_sheet'] - $oi['total_sqft']);
                                 $pdo->prepare("UPDATE shop_inventory SET full_sheets_qty = full_sheets_qty + 1, partial_sqft_qty = partial_sqft_qty - ? WHERE item_id = ? AND item_source = ?")
@@ -157,7 +159,7 @@ if ($action === 'save_pos_sale') {
             $totalSqft = (float)($it['total_sqft'] ?? 0);
             $category = $it['category'] ?? 'Glass';
             
-            if ($category === 'Glass') {
+            if ($category === 'Glass' || $totalSqft > 0) {
                 $calculated_discount = $totalSqft * $isc;
                 $lt = ($totalSqft * $sp) - $calculated_discount;
             } else {
@@ -177,7 +179,7 @@ if ($action === 'save_pos_sale') {
             $saleType = $it['sale_type'] ?? 'Complete Sheets';
             $deductFrom = $it['deduct_from'] ?? 'Full Sheets';
 
-            if ($category === 'Other') {
+            if ($category === 'Other' && !($shop['sqft_per_sheet'] > 0)) {
                 if ($shop['full_sheets_qty'] < $qty) throw new Exception("Insufficient stock for " . $it['brand_name']);
                 $pdo->prepare("UPDATE shop_inventory SET full_sheets_qty = full_sheets_qty - ? WHERE id = ?")->execute([$qty, $shop['id']]);
                 $saleType = 'Other Item';
@@ -276,7 +278,7 @@ if ($action === 'delete_pos_sale') {
         $old = $pdo->prepare("SELECT item_id, item_source, qty, total_sqft, sale_type FROM pos_sale_items WHERE sale_id=?");
         $old->execute([$id]);
         foreach ($old->fetchAll() as $oi) {
-            if ($oi['sale_type'] === 'Full Sheet') {
+            if ($oi['sale_type'] === 'Full Sheet' || $oi['sale_type'] === 'Complete Sheets' || $oi['sale_type'] === 'Other Item') {
                 $pdo->prepare("UPDATE shop_inventory SET full_sheets_qty = full_sheets_qty + ? WHERE item_id = ? AND item_source = ?")
                     ->execute([$oi['qty'], $oi['item_id'], $oi['item_source']]);
             } else {
@@ -556,7 +558,7 @@ function searchItems(term) {
                 <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">${it.category}</p>
               </div>
               <div class="text-right">
-                ${it.category === 'Glass' ? `
+                ${(it.category === 'Glass' || parseFloat(it.sqft_per_sheet) > 0) ? `
                     <p class="text-[11px] font-bold text-slate-700">Sheets: <span class="text-indigo-600">${it.full_sheets_qty}</span></p>
                     <p class="text-[10px] font-bold text-slate-500">${parseFloat(it.partial_sqft_qty).toFixed(2)} FT²</p>
                     <div class="mt-1 border-t border-slate-100 pt-1">
@@ -590,7 +592,7 @@ function addItem(shopId) {
     cost_price:parseFloat(it.true_cost_price || it.cost_price_per_sqft), selling_price:parseFloat(it.selling_price_per_sqft),
     sqft_per_sheet: parseFloat(it.sqft_per_sheet), qty:1, sale_type: 'Complete Sheets', deduct_from: 'Full Sheets', width:0, height:0,
     fraction: null,
-    total_sqft: (it.category === 'Glass' ? parseFloat(it.sqft_per_sheet) : 0), item_discount:0, line_total: parseFloat(it.selling_price_per_sqft) * (it.category === 'Glass' ? parseFloat(it.sqft_per_sheet) : 1),
+    total_sqft: ((it.category === 'Glass' || parseFloat(it.sqft_per_sheet) > 0) ? parseFloat(it.sqft_per_sheet) : 0), item_discount:0, line_total: parseFloat(it.selling_price_per_sqft) * ((it.category === 'Glass' || parseFloat(it.sqft_per_sheet) > 0) ? parseFloat(it.sqft_per_sheet) : 1),
     available_full: it.full_sheets_qty, available_partial: it.partial_sqft_qty
   });
   renderItemsTable();
@@ -607,7 +609,7 @@ function renderItemsTable() {
     let deductFromUI = '';
     let qtyUI = '';
     
-    if (it.category === 'Glass') {
+    if (it.category === 'Glass' || parseFloat(it.sqft_per_sheet) > 0) {
       itemDetailsUI = `
         <div class="mt-2">
             <select class="input-glass h-[28px] text-[10px] py-0 px-2 w-max border-indigo-200 bg-indigo-50/30 text-indigo-700 font-bold" onchange="updateItem('${it.rowId}', 'sale_type', this.value)">
@@ -628,16 +630,14 @@ function renderItemsTable() {
           `;
       } else {
           sizeUI = `
-          <div class="flex flex-col gap-2 mt-1">
-              <div class="flex items-center gap-1">
-                  <button onclick="updateItem('${it.rowId}', 'fraction', 0.5)" class="px-2 py-1.5 text-[9px] font-bold rounded transition-colors ${it.fraction===0.5?'bg-indigo-600 text-white':'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'}">1/2</button>
-                  <button onclick="updateItem('${it.rowId}', 'fraction', 0.25)" class="px-2 py-1.5 text-[9px] font-bold rounded transition-colors ${it.fraction===0.25?'bg-indigo-600 text-white':'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'}">1/4</button>
-                  <button onclick="updateItem('${it.rowId}', 'fraction', 0.75)" class="px-2 py-1.5 text-[9px] font-bold rounded transition-colors ${it.fraction===0.75?'bg-indigo-600 text-white':'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'}">3/4</button>
+          <div class="flex flex-col gap-1.5 mt-1">
+              <div class="flex items-center gap-1.5">
+                  <span class="text-[9px] font-black text-slate-400 uppercase w-4">H:</span>
+                  <input type="number" step="0.001" placeholder="Height" class="input-glass w-24 h-[30px] text-[10px] font-black" value="${it.height || ''}" onchange="updateItem('${it.rowId}', 'height', this.value)">
               </div>
-              <div class="flex gap-1 items-center">
-                  <input type="number" placeholder="W" class="input-glass w-12 h-[30px] text-[10px]" value="${it.width || ''}" onchange="updateItem('${it.rowId}', 'width', this.value)">
-                  <span class="text-slate-400 text-[10px]">x</span>
-                  <input type="number" placeholder="H" class="input-glass w-12 h-[30px] text-[10px]" value="${it.height || ''}" onchange="updateItem('${it.rowId}', 'height', this.value)">
+              <div class="flex items-center gap-1.5">
+                  <span class="text-[9px] font-black text-slate-400 uppercase w-4">W:</span>
+                  <input type="number" step="0.001" placeholder="Width" class="input-glass w-24 h-[30px] text-[10px] font-black" value="${it.width || ''}" onchange="updateItem('${it.rowId}', 'width', this.value)">
               </div>
           </div>
           `;
@@ -681,7 +681,7 @@ function renderItemsTable() {
       <td class="px-4 py-3 align-top">${sizeUI}</td>
       <td class="px-4 py-3 align-top min-w-[140px]">${deductFromUI}</td>
       <td class="px-4 py-3 align-top">${qtyUI}</td>
-      <td class="px-4 py-3 align-top"><span class="text-xs font-bold text-indigo-600 mt-3 block">${it.category === 'Glass' ? parseFloat(it.total_sqft).toFixed(2) + ' FT²' : '-'}</span></td>
+      <td class="px-4 py-3 align-top"><span class="text-xs font-bold text-indigo-600 mt-3 block">${(it.category === 'Glass' || parseFloat(it.sqft_per_sheet) > 0) ? parseFloat(it.total_sqft).toFixed(3) + ' FT²' : '-'}</span></td>
       <td class="px-4 py-3 align-top"><input type="number" class="input-glass w-20 h-[34px] text-right font-bold text-rose-500 mt-2" value="${it.item_discount}" onchange="updateItem('${it.rowId}', 'item_discount', this.value)"></td>
       <td class="px-4 py-3 align-top">
           <span class="text-sm font-black text-slate-800 mt-2 block">LKR ${it.line_total.toLocaleString()}</span>
@@ -711,13 +711,13 @@ function updateItem(rowId, field, val) {
   } else if (field === 'width' || field === 'height') {
     it[field] = parseFloat(val) || 0;
     it.fraction = null;
-    it.total_sqft = (it.width * it.height) / 144;
+    it.total_sqft = it.width * it.height;
   } else {
     it[field] = isNaN(parseFloat(val)) ? val : parseFloat(val);
   }
 
   // Recalculate line total based on category
-  if (it.category === 'Glass') {
+  if (it.category === 'Glass' || parseFloat(it.sqft_per_sheet) > 0) {
       if (it.sale_type === 'Complete Sheets') {
           it.total_sqft = it.sqft_per_sheet * it.qty;
           it.deduct_from = 'Full Sheets';
@@ -727,7 +727,7 @@ function updateItem(rowId, field, val) {
           if (it.fraction) {
               sqft_per_piece = it.sqft_per_sheet * it.fraction;
           } else if (it.width && it.height) {
-              sqft_per_piece = (it.width * it.height) / 144;
+              sqft_per_piece = it.width * it.height;
           }
           it.total_sqft = sqft_per_piece * it.qty;
       }
