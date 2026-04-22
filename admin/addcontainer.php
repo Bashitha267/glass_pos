@@ -585,7 +585,7 @@ if ($current_tab === 'other') {
               (SELECT price_per_item FROM other_purchase_items WHERE purchase_id = other_purchases.id LIMIT 1) as unit_cost_item,
               (SELECT COUNT(*) FROM other_purchase_items WHERE purchase_id = other_purchases.id AND category = 'Glass') as glass_count,
               (SELECT SUM(qty) FROM other_purchase_items WHERE purchase_id = other_purchases.id) as total_qty,
-              (SELECT SUM(qty - sold_qty) FROM other_purchase_items WHERE purchase_id = other_purchases.id) as available_qty,
+              (SELECT SUM((qty - sold_qty) + COALESCE((SELECT full_sheets_qty FROM shop_inventory WHERE item_id = other_purchase_items.id AND item_source = 'other' LIMIT 1), 0)) FROM other_purchase_items WHERE purchase_id = other_purchases.id) as available_qty,
               COALESCE((SELECT SUM(amount) FROM other_purchase_payments WHERE purchase_id = other_purchases.id), 0) as total_paid
               FROM other_purchases 
               $whereClause 
@@ -646,7 +646,7 @@ if ($current_tab === 'other') {
     $total_pages = ceil($total_records / $limit);
 
     $query = "SELECT c.*, b.name as brand_name,
-              (SELECT SUM(total_qty - sold_qty) FROM container_items WHERE container_id = c.id) as available_qty,
+              (SELECT SUM((total_qty - sold_qty) + COALESCE((SELECT full_sheets_qty FROM shop_inventory WHERE item_id = container_items.id AND item_source = 'container' LIMIT 1), 0)) FROM container_items WHERE container_id = c.id) as available_qty,
               COALESCE((SELECT SUM(amount) FROM container_payments WHERE container_id = c.id), 0) as total_paid
               FROM containers c
               LEFT JOIN (SELECT container_id, MIN(brand_id) as brand_id FROM container_items GROUP BY container_id) ci ON c.id = ci.container_id
