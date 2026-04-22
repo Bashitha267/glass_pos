@@ -910,7 +910,6 @@ if ($current_tab === 'other') {
                                 <th class="px-3 py-4 font-black text-white">Remaining Full</th>
                                 <th class="px-3 py-4 font-black text-indigo-100">Remaining Partial</th>
                                 <th class="px-3 py-4 font-black text-emerald-400">Price / SQFT</th>
-                                <th class="px-3 py-4 text-center font-black">Action</th>
                             </tr>
                         <?php else: ?>
                             <tr
@@ -1009,8 +1008,8 @@ if ($current_tab === 'other') {
                                                     Shop
                                                 </button>
                                             <?php endif; ?>
-                                            <button onclick="editPurchase(<?php echo $r['id']; ?>)"
-                                                class="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all">
+                                            <button onclick="editOtherPurchase(<?php echo $r['id']; ?>)"
+                                                class="bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-indigo-900 transition-all shadow-sm shadow-indigo-200">
                                                 Update
                                             </button>
                                             <button
@@ -1042,12 +1041,6 @@ if ($current_tab === 'other') {
                                     <td class="px-3 py-4 text-sm font-bold text-emerald-600">
                                         Rs. <?php echo number_format($r['selling_price_per_sqft'], 2); ?>
                                         <span class="text-[10px] text-slate-400 font-bold uppercase tracking-widest ml-1"><?php echo ($r['category'] === 'Glass' || $r['sqft_per_sheet'] > 0) ? '/ SQFT' : '/ Qty'; ?></span>
-                                    </td>
-                                    <td class="px-3 py-4 text-center">
-                                        <button onclick="openShopSelectModal(<?php echo $r['item_id']; ?>, '<?php echo $r['item_source']; ?>')"
-                                                class="bg-indigo-600 text-white px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all">
-                                            Manage
-                                        </button>
                                     </td>
                                 </tr>
                             <?php else:
@@ -1100,7 +1093,7 @@ if ($current_tab === 'other') {
                                                 Shop
                                             </button>
                                             <button onclick="editContainer('<?php echo $r['container_number']; ?>')"
-                                                class="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-lg shadow-emerald-600/10">
+                                                class="bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-indigo-900 transition-all shadow-sm shadow-indigo-200">
                                                 Update
                                             </button>
                                             <button
