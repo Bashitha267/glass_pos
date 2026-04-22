@@ -67,7 +67,10 @@ $opExp = (float) $pdo->query("SELECT COALESCE(SUM(grand_total),0) FROM other_pur
 // Overhead Expenses (bills)
 $oeExp = (float) $pdo->query("SELECT COALESCE(SUM(amount),0) FROM monthly_expenses WHERE MONTH(expense_date) = $currentMonth AND YEAR(expense_date) = $currentYear")->fetchColumn();
 
-$dash_total_profit = ($del_revenue - $dash_total_cost - $dash_total_expenses) + $posProfit - $dash_total_emp_payments - $opExp - $oeExp;
+// Other Incomes
+$oiInc = (float) $pdo->query("SELECT COALESCE(SUM(amount),0) FROM monthly_incomes WHERE MONTH(income_date) = $currentMonth AND YEAR(income_date) = $currentYear")->fetchColumn();
+
+$dash_total_profit = ($del_revenue - $dash_total_cost - $dash_total_expenses) + $posProfit - $dash_total_emp_payments - $opExp - $oeExp + $oiInc;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -324,6 +327,15 @@ $dash_total_profit = ($del_revenue - $dash_total_cost - $dash_total_expenses) + 
                 </div>
                 <h3 class="text-[8px] sm:text-[10px] uppercase font-black tracking-widest text-slate-800 group-hover:text-purple-600 transition-colors">Overhead
                     Expenses</h3>
+            </a>
+            <a href="other_incomes.php"
+                class="glass-card group p-5 sm:p-8 flex flex-col items-center justify-center text-center">
+                <div
+                    class="action-icon w-12 h-12 sm:w-16 sm:h-16 bg-emerald-50 border-2 border-emerald-500/30 rounded-2xl sm:rounded-3xl flex items-center justify-center mb-4 sm:mb-6 shadow-sm group-hover:scale-110 transition-transform">
+                    <i class="fa-solid fa-hand-holding-dollar text-xl sm:text-3xl text-emerald-600"></i>
+                </div>
+                <h3 class="text-[8px] sm:text-[10px] uppercase font-black tracking-widest text-slate-800 group-hover:text-emerald-600 transition-colors">Other
+                    Incomes</h3>
             </a>
             <!-- Reports Hub -->
             <a href="reports.php" class="glass-card group p-5 sm:p-8 flex flex-col items-center justify-center text-center">

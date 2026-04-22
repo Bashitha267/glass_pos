@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Apr 12, 2026 at 04:11 AM
+-- Generation Time: Apr 22, 2026 at 01:06 PM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.0.30
 
@@ -62,6 +62,7 @@ CREATE TABLE `containers` (
   `total_qty` int(11) DEFAULT 0,
   `damaged_qty` int(11) DEFAULT 0,
   `per_item_cost` decimal(15,2) DEFAULT 0.00,
+  `per_sheet_cost` decimal(15,2) DEFAULT 0.00,
   `country` varchar(100) DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -93,6 +94,7 @@ CREATE TABLE `container_items` (
   `qty_per_pallet` int(11) NOT NULL,
   `square_feet` double DEFAULT 0,
   `total_qty` int(11) NOT NULL,
+  `total_sqft` double DEFAULT 0,
   `sold_qty` int(11) DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -231,6 +233,7 @@ CREATE TABLE `delivery_items` (
   `qty` int(11) NOT NULL,
   `cost_price` decimal(15,2) NOT NULL,
   `selling_price` decimal(15,2) NOT NULL,
+  `square_feet` double DEFAULT 0,
   `total` decimal(15,2) NOT NULL,
   `damaged_qty` int(11) DEFAULT 0,
   `bill_image` varchar(255) DEFAULT NULL
@@ -284,7 +287,8 @@ CREATE TABLE `delivery_payments` (
   `recorded_by` int(11) NOT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `due_date` date DEFAULT NULL,
-  `cheque_customer_id` int(11) DEFAULT NULL
+  `cheque_customer_id` int(11) DEFAULT NULL,
+  `cheque_bank` varchar(255) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -337,13 +341,6 @@ CREATE TABLE `employee_salary_settings` (
   `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
---
--- Dumping data for table `employee_salary_settings`
---
-
-INSERT INTO `employee_salary_settings` (`id`, `user_id`, `monthly_salary`, `payment_frequency`, `created_at`, `updated_at`) VALUES
-(1, 7, 10000.00, 'weekly', '2026-04-12 01:50:33', '2026-04-12 01:50:39');
-
 -- --------------------------------------------------------
 
 --
@@ -355,6 +352,20 @@ CREATE TABLE `monthly_expenses` (
   `expense_name` varchar(255) NOT NULL,
   `amount` decimal(15,2) NOT NULL,
   `expense_date` date NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `monthly_incomes`
+--
+
+CREATE TABLE `monthly_incomes` (
+  `id` int(11) NOT NULL,
+  `income_name` varchar(255) NOT NULL,
+  `amount` decimal(15,2) NOT NULL,
+  `income_date` date NOT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -405,7 +416,11 @@ CREATE TABLE `other_purchase_items` (
   `square_feet` double DEFAULT 0,
   `sold_qty` int(11) DEFAULT 0,
   `price_per_item` decimal(15,2) NOT NULL,
-  `line_total` decimal(15,2) NOT NULL
+  `price_per_sqft` decimal(15,2) DEFAULT 0.00,
+  `total_sqft` double DEFAULT 0,
+  `line_total` decimal(15,2) NOT NULL,
+  `pallets` int(11) DEFAULT 0,
+  `qty_per_pallet` int(11) DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -442,6 +457,7 @@ CREATE TABLE `pos_sales` (
   `bill_id` varchar(20) NOT NULL,
   `sale_date` date NOT NULL,
   `customer_id` int(11) DEFAULT NULL,
+  `manual_customer_name` varchar(255) DEFAULT NULL,
   `created_by` int(11) NOT NULL,
   `subtotal` decimal(15,2) DEFAULT 0.00,
   `item_discount` decimal(15,2) DEFAULT 0.00,
@@ -449,6 +465,9 @@ CREATE TABLE `pos_sales` (
   `bill_discount_type` varchar(20) DEFAULT NULL,
   `grand_total` decimal(15,2) DEFAULT 0.00,
   `payment_method` enum('Cash','Account Transfer','Cheque','Card','Later Payment','Multiple') DEFAULT 'Cash',
+  `cheque_number` varchar(100) DEFAULT NULL,
+  `payee_name` varchar(150) DEFAULT NULL,
+  `bank_id` int(11) DEFAULT NULL,
   `payment_status` enum('pending','completed') DEFAULT 'pending',
   `notes` text DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
@@ -484,6 +503,12 @@ CREATE TABLE `pos_sale_items` (
   `sale_id` int(11) NOT NULL,
   `item_id` int(11) NOT NULL,
   `item_source` enum('container','other') NOT NULL DEFAULT 'container',
+  `category` enum('Glass','Other') DEFAULT 'Glass',
+  `sale_type` varchar(50) DEFAULT 'Complete Sheets',
+  `deduct_from` varchar(50) DEFAULT 'Full Sheets',
+  `width` double DEFAULT 0,
+  `height` double DEFAULT 0,
+  `total_sqft` double DEFAULT 0,
   `qty` int(11) NOT NULL,
   `damaged_qty` int(11) DEFAULT 0,
   `cost_price` decimal(15,2) NOT NULL,
@@ -515,6 +540,43 @@ CREATE TABLE `pos_sale_payments` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `shop_inventory`
+--
+
+CREATE TABLE `shop_inventory` (
+  `id` int(11) NOT NULL,
+  `item_id` int(11) NOT NULL,
+  `item_source` enum('container','other') NOT NULL,
+  `category` varchar(50) DEFAULT 'Other',
+  `brand_name` varchar(255) DEFAULT NULL,
+  `sqft_per_sheet` double DEFAULT 0,
+  `full_sheets_qty` int(11) DEFAULT 0,
+  `partial_sqft_qty` double DEFAULT 0,
+  `selling_price_per_sqft` decimal(15,2) DEFAULT 0.00,
+  `total_sheets_added` int(11) DEFAULT 0,
+  `cost_price_per_sqft` decimal(15,2) DEFAULT 0.00,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `shop_inventory_history`
+--
+
+CREATE TABLE `shop_inventory_history` (
+  `id` int(11) NOT NULL,
+  `shop_inventory_id` int(11) NOT NULL,
+  `sheets_added` int(11) DEFAULT 0,
+  `cost_price_per_sqft` decimal(15,2) DEFAULT NULL,
+  `selling_price_per_sqft` decimal(15,2) DEFAULT NULL,
+  `added_at` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `users`
 --
 
@@ -540,7 +602,8 @@ INSERT INTO `users` (`id`, `username`, `password`, `role`, `full_name`, `contact
 (5, NULL, NULL, 'employee', 'nimesh', '1234555', NULL, NULL, NULL, '2026-03-21 16:16:13'),
 (6, NULL, NULL, 'employee', 'sugath', '122', NULL, NULL, NULL, '2026-03-21 16:25:12'),
 (7, NULL, NULL, 'employee', 'kamal', '122222', NULL, NULL, NULL, '2026-03-23 14:54:10'),
-(8, NULL, NULL, 'employee', 'kumar', '2222', NULL, NULL, NULL, '2026-03-29 09:15:25');
+(8, NULL, NULL, 'employee', 'kumar', '2222', NULL, NULL, NULL, '2026-03-29 09:15:25'),
+(9, NULL, NULL, 'employee', 'peris', '124666', NULL, NULL, NULL, '2026-04-21 15:45:39');
 
 --
 -- Indexes for dumped tables
@@ -705,6 +768,12 @@ ALTER TABLE `monthly_expenses`
   ADD PRIMARY KEY (`id`);
 
 --
+-- Indexes for table `monthly_incomes`
+--
+ALTER TABLE `monthly_incomes`
+  ADD PRIMARY KEY (`id`);
+
+--
 -- Indexes for table `other_purchases`
 --
 ALTER TABLE `other_purchases`
@@ -768,6 +837,20 @@ ALTER TABLE `pos_sale_payments`
   ADD KEY `sale_id` (`sale_id`),
   ADD KEY `bank_id` (`bank_id`),
   ADD KEY `recorded_by` (`recorded_by`);
+
+--
+-- Indexes for table `shop_inventory`
+--
+ALTER TABLE `shop_inventory`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `item_id` (`item_id`,`item_source`);
+
+--
+-- Indexes for table `shop_inventory_history`
+--
+ALTER TABLE `shop_inventory_history`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `shop_inventory_id` (`shop_inventory_id`);
 
 --
 -- Indexes for table `users`
@@ -886,18 +969,24 @@ ALTER TABLE `delivery_proof_photos`
 -- AUTO_INCREMENT for table `employee_salary_payments`
 --
 ALTER TABLE `employee_salary_payments`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `employee_salary_settings`
 --
 ALTER TABLE `employee_salary_settings`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `monthly_expenses`
 --
 ALTER TABLE `monthly_expenses`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `monthly_incomes`
+--
+ALTER TABLE `monthly_incomes`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
@@ -949,10 +1038,22 @@ ALTER TABLE `pos_sale_payments`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `shop_inventory`
+--
+ALTER TABLE `shop_inventory`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `shop_inventory_history`
+--
+ALTER TABLE `shop_inventory_history`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `users`
 --
 ALTER TABLE `users`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=9;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=10;
 
 --
 -- Constraints for dumped tables
@@ -1125,6 +1226,12 @@ ALTER TABLE `pos_sale_payments`
   ADD CONSTRAINT `pos_sale_payments_ibfk_1` FOREIGN KEY (`sale_id`) REFERENCES `pos_sales` (`id`) ON DELETE CASCADE,
   ADD CONSTRAINT `pos_sale_payments_ibfk_2` FOREIGN KEY (`bank_id`) REFERENCES `banks` (`id`) ON DELETE SET NULL,
   ADD CONSTRAINT `pos_sale_payments_ibfk_3` FOREIGN KEY (`recorded_by`) REFERENCES `users` (`id`);
+
+--
+-- Constraints for table `shop_inventory_history`
+--
+ALTER TABLE `shop_inventory_history`
+  ADD CONSTRAINT `shop_inventory_history_ibfk_1` FOREIGN KEY (`shop_inventory_id`) REFERENCES `shop_inventory` (`id`) ON DELETE CASCADE;
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;

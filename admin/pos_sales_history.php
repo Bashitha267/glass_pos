@@ -11,13 +11,15 @@ if ($action === 'delete_pos_sale') {
     try {
         $pdo->beginTransaction();
         $id = (int)$_POST['id'];
-        $old = $pdo->prepare("SELECT item_id, item_source, qty FROM pos_sale_items WHERE sale_id=?");
+        $old = $pdo->prepare("SELECT item_id, item_source, qty, total_sqft, sale_type FROM pos_sale_items WHERE sale_id=?");
         $old->execute([$id]);
         foreach ($old->fetchAll() as $oi) {
-            if ($oi['item_source'] === 'container') {
-                $pdo->prepare("UPDATE container_items SET sold_qty=GREATEST(0,sold_qty-?) WHERE id=?")->execute([$oi['qty'], $oi['item_id']]);
+            if ($oi['sale_type'] === 'Full Sheet') {
+                $pdo->prepare("UPDATE shop_inventory SET full_sheets_qty = full_sheets_qty + ? WHERE item_id = ? AND item_source = ?")
+                    ->execute([$oi['qty'], $oi['item_id'], $oi['item_source']]);
             } else {
-                $pdo->prepare("UPDATE other_purchase_items SET sold_qty=GREATEST(0,sold_qty-?) WHERE id=?")->execute([$oi['qty'], $oi['item_id']]);
+                $pdo->prepare("UPDATE shop_inventory SET partial_sqft_qty = partial_sqft_qty + ? WHERE item_id = ? AND item_source = ?")
+                    ->execute([$oi['total_sqft'], $oi['item_id'], $oi['item_source']]);
             }
         }
         $pdo->prepare("INSERT INTO pos_sale_audits (sale_id, action_type, notes, changed_by) VALUES (?,?,?,?)")->execute([$id,'DELETED',"Sale #$id deleted.",$user_id]);
@@ -31,14 +33,12 @@ if ($action === 'delete_pos_sale') {
 // ── View Items ────────────────────────────────────────────────────────────────
 if ($action === 'get_items') {
     $id = (int)($_GET['id'] ?? 0);
-    $sale = $pdo->query("SELECT ps.*, c.name as customer_name, c.contact_number FROM pos_sales ps LEFT JOIN customers c ON ps.customer_id=c.id WHERE ps.id=$id")->fetch(PDO::FETCH_ASSOC);
+    $sale = $pdo->query("SELECT ps.*, COALESCE(c.name, ps.manual_customer_name) as customer_name, c.contact_number FROM pos_sales ps LEFT JOIN customers c ON ps.customer_id=c.id WHERE ps.id=$id")->fetch(PDO::FETCH_ASSOC);
     $items = $pdo->query("
         SELECT psi.*, 
-        CASE WHEN psi.item_source = 'container' THEN b.name ELSE opi.item_name END as brand_name 
+        si.brand_name
         FROM pos_sale_items psi 
-        LEFT JOIN container_items ci ON psi.item_id=ci.id AND psi.item_source = 'container'
-        LEFT JOIN brands b ON ci.brand_id=b.id 
-        LEFT JOIN other_purchase_items opi ON psi.item_id=opi.id AND psi.item_source = 'other'
+        LEFT JOIN shop_inventory si ON psi.item_id = si.item_id AND psi.item_source = si.item_source
         WHERE psi.sale_id=$id
     ")->fetchAll(PDO::FETCH_ASSOC);
     $payments = $pdo->query("SELECT psp.*, b.name as bank_name FROM pos_sale_payments psp LEFT JOIN banks b ON psp.bank_id=b.id WHERE psp.sale_id=$id ORDER BY psp.created_at")->fetchAll(PDO::FETCH_ASSOC);
@@ -165,8 +165,9 @@ if ($status_f) { $where[] = "ps.payment_status = ?"; $params[] = $status_f; }
 
 $whereClause = $where ? "WHERE ".implode(" AND ",$where) : "";
 
-$baseQ = "SELECT ps.*, c.name as customer_name, c.contact_number,
-    (SELECT COALESCE(SUM(amount),0) FROM pos_sale_payments WHERE sale_id=ps.id) as total_paid
+$baseQ = "SELECT ps.*, COALESCE(c.name, ps.manual_customer_name) as customer_name, c.contact_number,
+    (SELECT COALESCE(SUM(amount),0) FROM pos_sale_payments WHERE sale_id=ps.id) as total_paid,
+    (SELECT COALESCE(SUM(CASE WHEN psi.category = 'Glass' THEN psi.total_sqft * psi.cost_price ELSE psi.qty * psi.cost_price END), 0) FROM pos_sale_items psi WHERE psi.sale_id = ps.id) as total_cost
     FROM pos_sales ps LEFT JOIN customers c ON ps.customer_id=c.id
     $whereClause";
 
@@ -183,7 +184,7 @@ $sales = $sales->fetchAll(PDO::FETCH_ASSOC);
 $statsParams = $params;
 $statsBase = "SELECT COALESCE(SUM(ps.grand_total),0) as revenue,
     COALESCE(SUM(ps.grand_total - ps.item_discount - ps.bill_discount),0) as net,
-    COALESCE(SUM((SELECT SUM(psi.qty * psi.cost_price) FROM pos_sale_items psi WHERE psi.sale_id=ps.id)),0) as cost
+    COALESCE(SUM((SELECT SUM(CASE WHEN psi.category = 'Glass' THEN psi.total_sqft * psi.cost_price ELSE psi.qty * psi.cost_price END) FROM pos_sale_items psi WHERE psi.sale_id=ps.id)),0) as cost
     FROM pos_sales ps LEFT JOIN customers c ON ps.customer_id=c.id $whereClause";
 $statsR = $pdo->prepare($statsBase);
 $statsR->execute($statsParams);
@@ -206,7 +207,7 @@ $profit  = $revenue - (float)$stats['cost'];
         .glass-card { background: rgba(255,255,255,0.88); backdrop-filter: blur(20px); border: 1px solid white; border-radius: 24px; box-shadow: 0 10px 30px -5px rgba(0,0,0,0.04); }
         .input-glass { background: rgba(255,255,255,0.6); border: 1px solid #e2e8f0; padding: 10px 16px; border-radius: 14px; outline: none; transition: all 0.3s; font-size: 14px; font-weight: 700; color: #0f172a; }
         .input-glass:focus { border-color: #0891b2; background: white; }
-        .table-header { background: #1e293b; color: white; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+        .table-header { background: #1e293b; color: white; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
         .custom-scroll::-webkit-scrollbar { width: 6px; } .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
         @media print {
             body * { visibility: hidden; }
@@ -223,8 +224,8 @@ $profit  = $revenue - (float)$stats['cost'];
                 <i class="fa-solid fa-arrow-left text-base sm:text-lg"></i>
             </a>
             <div>
-                <h1 class="text-lg sm:text-2xl font-black text-slate-900 font-['Outfit']">POS History</h1>
-                <p class="hidden md:block text-[10px] uppercase font-black text-slate-400 tracking-widest mt-0.5">Direct Sales Records</p>
+                <h1 class="text-lg font-black text-slate-900 font-['Outfit']">POS History</h1>
+                <p class="hidden md:block text-[9px] uppercase font-black text-slate-400 tracking-widest mt-0.5">Direct Sales Records</p>
             </div>
         </div>
     </div>
@@ -233,13 +234,13 @@ $profit  = $revenue - (float)$stats['cost'];
 
     <!-- Stats Header -->
     <div class="grid grid-cols-2 gap-4 mb-6">
-        <div class="glass-card p-5 bg-gradient-to-br from-emerald-500/10 to-transparent border-emerald-200">
-            <p class="text-[10px] uppercase font-black text-slate-500 tracking-widest mb-1">Total Revenue</p>
-            <h2 class="text-2xl font-black text-emerald-600">LKR <?php echo number_format($revenue,2); ?></h2>
+        <div class="glass-card p-4 bg-gradient-to-br from-emerald-500/10 to-transparent border-emerald-200">
+            <p class="text-[9px] uppercase font-black text-slate-500 tracking-widest mb-1">Total Revenue</p>
+            <h2 class="text-xl font-black text-emerald-600">LKR <?php echo number_format($revenue,2); ?></h2>
         </div>
-        <div class="glass-card p-5 bg-gradient-to-br from-teal-500/10 to-transparent border-teal-200">
-            <p class="text-[10px] uppercase font-black text-slate-500 tracking-widest mb-1">Est. Profit</p>
-            <h2 class="text-2xl font-black text-teal-600">LKR <?php echo number_format($profit,2); ?></h2>
+        <div class="glass-card p-4 bg-gradient-to-br from-teal-500/10 to-transparent border-teal-200">
+            <p class="text-[9px] uppercase font-black text-slate-500 tracking-widest mb-1">Est. Profit</p>
+            <h2 class="text-xl font-black text-teal-600">LKR <?php echo number_format($profit,2); ?></h2>
         </div>
     </div>
 
@@ -305,6 +306,7 @@ $profit  = $revenue - (float)$stats['cost'];
                         <th class="px-4 py-3.5">Bill Total</th>
                         <th class="px-4 py-3.5 text-emerald-600">Paid</th>
                         <th class="px-4 py-3.5 text-rose-500">Pending</th>
+                        <th class="px-4 py-3.5 text-indigo-600">Profit</th>
                         <th class="px-4 py-3.5 text-center">Status</th>
                         <th class="px-4 py-3.5 text-right">Actions</th>
                     </tr>
@@ -314,12 +316,13 @@ $profit  = $revenue - (float)$stats['cost'];
                     <tr class="hover:bg-slate-50/50 transition-colors">
                         <td class="px-4 py-3 font-black text-indigo-600 text-[11px]"><?php echo htmlspecialchars($s['bill_id']); ?></td>
                         <td class="px-4 py-3 font-bold text-slate-700 text-xs"><?php echo date('M d, Y',strtotime($s['sale_date'])); ?></td>
-                        <td class="px-4 py-3 font-bold text-slate-800 text-xs"><?php echo htmlspecialchars($s['customer_name'] ?: 'Walk-in'); ?></td>
+                        <td class="px-4 py-3 font-bold text-slate-800 text-xs"><?php echo htmlspecialchars($s['customer_name'] ?: ($s['manual_customer_name'] ?: 'Walk-in')); ?></td>
                         <td class="px-4 py-3 text-slate-500 text-xs"><?php echo htmlspecialchars($s['contact_number'] ?: '—'); ?></td>
                         <td class="px-4 py-3 font-bold text-rose-500 text-xs">LKR <?php echo number_format((float)$s['item_discount']+(float)$s['bill_discount'],2); ?></td>
                         <td class="px-4 py-3 font-black text-emerald-600 text-xs">LKR <?php echo number_format($s['grand_total'],2); ?></td>
                         <td class="px-4 py-3 font-bold text-emerald-600 text-xs">LKR <?php echo number_format($s['total_paid'], 2); ?></td>
                         <td class="px-4 py-3 font-bold text-rose-600 text-xs">LKR <?php echo number_format($s['grand_total'] - $s['total_paid'], 2); ?></td>
+                        <td class="px-4 py-3 font-black text-indigo-700 text-xs">LKR <?php echo number_format($s['grand_total'] - $s['total_cost'], 2); ?></td>
                         <td class="px-4 py-3 text-center">
                             <?php $sc = $s['payment_status']==='completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'; ?>
                             <span class="px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider <?php echo $sc; ?>"><?php echo $s['payment_status']; ?></span>
@@ -550,7 +553,17 @@ function viewSale(id) {
     fetch(`?action=get_items&id=${id}`).then(r=>r.json()).then(res => {
         if (!res.success) return;
         const s = res.sale; const items = res.items; const pays = res.payments;
-        let rows = items.map(it=>`<tr class="border-b border-slate-100"><td class="py-2 pr-4 font-bold text-xs text-slate-800">${it.brand_name}</td><td class="py-2 pr-4 text-xs text-center">${it.qty}</td><td class="py-2 pr-4 text-xs text-right">LKR ${fmt(it.selling_price)}</td><td class="py-2 pr-4 text-xs text-right text-rose-500">LKR ${fmt(it.item_discount)}</td><td class="py-2 text-xs text-right font-black text-emerald-600">LKR ${fmt(it.line_total)}</td></tr>`).join('');
+        let rows = items.map(it => {
+            let detail = it.sale_type === 'Custom Size' ? `${it.width}" x ${it.height}" (${it.qty} Pcs)` : `${it.qty} ${it.category === 'Other' ? 'Item(s)' : 'Sheets'}`;
+            let sqftDisplay = it.category === 'Other' ? '-' : `${parseFloat(it.total_sqft).toFixed(2)} FT²`;
+            return `<tr class="border-b border-slate-100">
+                <td class="py-2 pr-4 font-bold text-xs text-slate-800">${it.brand_name} <span class="text-[9px] uppercase tracking-widest text-slate-400 block mt-0.5">${it.category}</span></td>
+                <td class="py-2 pr-4 text-xs text-center">${detail}</td>
+                <td class="py-2 pr-4 text-xs text-right">${sqftDisplay}</td>
+                <td class="py-2 pr-4 text-xs text-right">LKR ${fmt(it.selling_price)}</td>
+                <td class="py-2 text-xs text-right font-black text-emerald-600">LKR ${fmt(it.line_total)}</td>
+            </tr>`;
+        }).join('');
         let payRows = pays.map(p=>`<div class="flex justify-between text-xs"><span class="font-bold text-slate-600">${p.payment_type}${p.bank_name?' — '+p.bank_name:''}</span><span class="font-black text-slate-800">LKR ${fmt(p.amount)}</span></div>`).join('');
         const totalDisc = (parseFloat(s.item_discount||0)+parseFloat(s.bill_discount||0));
         document.getElementById('view-content').innerHTML = `
@@ -560,7 +573,7 @@ function viewSale(id) {
           </div>
           <div class="overflow-x-auto rounded-xl border border-slate-100">
             <table class="w-full text-left">
-              <thead><tr class="table-header text-[10px]"><th class="px-3 py-2.5">Brand</th><th class="px-3 py-2.5 text-center">Qty</th><th class="px-3 py-2.5 text-right">Price</th><th class="px-3 py-2.5 text-right">Disc</th><th class="px-3 py-2.5 text-right">Total</th></tr></thead>
+              <thead><tr class="table-header text-[10px]"><th class="px-3 py-2.5">Brand</th><th class="px-3 py-2.5 text-center">Qty / Size</th><th class="px-3 py-2.5 text-right">Sqft</th><th class="px-3 py-2.5 text-right">Price</th><th class="px-3 py-2.5 text-right">Total</th></tr></thead>
               <tbody>${rows}</tbody>
             </table>
           </div>

@@ -57,7 +57,18 @@ $stmtExpenses->execute($params);
 $total_expenses = (float)$stmtExpenses->fetchColumn();
 
 // 5. Cost of Goods (Profit calculation helper)
-$stmtCost = $pdo->prepare("SELECT SUM(di.qty * di.cost_price) FROM delivery_items di JOIN delivery_customers dc ON di.delivery_customer_id = dc.id JOIN deliveries d ON dc.delivery_id = d.id WHERE $whereClause");
+$stmtCost = $pdo->prepare("
+    SELECT SUM(
+        CASE 
+            WHEN di.square_feet > 0 THEN (di.qty - COALESCE(di.damaged_qty,0)) * di.square_feet * di.cost_price 
+            ELSE (di.qty - COALESCE(di.damaged_qty,0)) * di.cost_price 
+        END
+    ) 
+    FROM delivery_items di 
+    JOIN delivery_customers dc ON di.delivery_customer_id = dc.id 
+    JOIN deliveries d ON dc.delivery_id = d.id 
+    WHERE $whereClause
+");
 $stmtCost->execute($params);
 $total_cost = (float)$stmtCost->fetchColumn();
 
@@ -211,7 +222,17 @@ $stmtPOSRev = $pdo->prepare("SELECT COALESCE(SUM(grand_total),0) FROM pos_sales 
 $stmtPOSRev->execute($posParams);
 $pos_revenue = (float)$stmtPOSRev->fetchColumn();
 
-$stmtPOSCost = $pdo->prepare("SELECT COALESCE(SUM(psi.qty * psi.cost_price),0) FROM pos_sale_items psi JOIN pos_sales ps ON psi.sale_id=ps.id WHERE $posWhereClause");
+$stmtPOSCost = $pdo->prepare("
+    SELECT COALESCE(SUM(
+        CASE 
+            WHEN psi.category = 'Glass' THEN psi.total_sqft * psi.cost_price 
+            ELSE psi.qty * psi.cost_price 
+        END
+    ),0) 
+    FROM pos_sale_items psi 
+    JOIN pos_sales ps ON psi.sale_id=ps.id 
+    WHERE $posWhereClause
+");
 $stmtPOSCost->execute($posParams);
 $pos_cost = (float)$stmtPOSCost->fetchColumn();
 $pos_profit = $pos_revenue - $pos_cost;
@@ -248,7 +269,14 @@ $stmtOEExpenses = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM monthly_exp
 $stmtOEExpenses->execute($oeParams);
 $total_overhead_expenses = (float)$stmtOEExpenses->fetchColumn();
 
-$total_business_profit = $profit + $pos_profit - $total_emp_payments - $total_other_purchases - $total_overhead_expenses;
+// 8. Other Incomes
+$oiWhereClause = str_replace('expense_date', 'income_date', $oeWhereClause);
+$stmtOIIncomes = $pdo->prepare("SELECT COALESCE(SUM(amount),0) FROM monthly_incomes WHERE $oiWhereClause");
+$stmtOIIncomes->execute($oeParams);
+$total_other_incomes = (float)$stmtOIIncomes->fetchColumn();
+
+// Business Profit = (Delivery Revenue - Delivery COGS - Delivery Expenses) + (POS Revenue - POS COGS) - Salaries - Overheads + Other Incomes
+$total_business_profit = $profit + $pos_profit - $total_emp_payments - $total_overhead_expenses + $total_other_incomes;
 
 // ====== EXCLUSIVE CURRENT MONTH PROFIT ======
 $currM = date('m');
@@ -256,18 +284,40 @@ $currY = date('Y');
 
 $currDelRev = (float)$pdo->query("SELECT COALESCE(SUM(dc.subtotal - dc.discount),0) FROM delivery_customers dc JOIN deliveries d ON dc.delivery_id = d.id WHERE MONTH(d.delivery_date) = $currM AND YEAR(d.delivery_date) = $currY")->fetchColumn();
 $currDelExp = (float)$pdo->query("SELECT COALESCE(SUM(de.amount),0) FROM delivery_expenses de JOIN deliveries d ON de.delivery_id = d.id WHERE MONTH(d.delivery_date) = $currM AND YEAR(d.delivery_date) = $currY")->fetchColumn();
-$currDelCost = (float)$pdo->query("SELECT COALESCE(SUM(di.qty * di.cost_price),0) FROM delivery_items di JOIN delivery_customers dc ON di.delivery_customer_id = dc.id JOIN deliveries d ON dc.delivery_id = d.id WHERE MONTH(d.delivery_date) = $currM AND YEAR(d.delivery_date) = $currY")->fetchColumn();
+$currDelCost = (float)$pdo->query("
+    SELECT COALESCE(SUM(
+        CASE 
+            WHEN di.square_feet > 0 THEN (di.qty - COALESCE(di.damaged_qty,0)) * di.square_feet * di.cost_price 
+            ELSE (di.qty - COALESCE(di.damaged_qty,0)) * di.cost_price 
+        END
+    ),0) 
+    FROM delivery_items di 
+    JOIN delivery_customers dc ON di.delivery_customer_id = dc.id 
+    JOIN deliveries d ON dc.delivery_id = d.id 
+    WHERE MONTH(d.delivery_date) = $currM AND YEAR(d.delivery_date) = $currY
+")->fetchColumn();
 $currDelProfit = $currDelRev - ($currDelExp + $currDelCost);
 
 $currPOSRev = (float)$pdo->query("SELECT COALESCE(SUM(grand_total),0) FROM pos_sales WHERE MONTH(sale_date) = $currM AND YEAR(sale_date) = $currY")->fetchColumn();
-$currPOSCost = (float)$pdo->query("SELECT COALESCE(SUM(psi.qty * psi.cost_price),0) FROM pos_sale_items psi JOIN pos_sales ps ON psi.sale_id=ps.id WHERE MONTH(ps.sale_date) = $currM AND YEAR(ps.sale_date) = $currY")->fetchColumn();
+$currPOSCost = (float)$pdo->query("
+    SELECT COALESCE(SUM(
+        CASE 
+            WHEN psi.category = 'Glass' THEN psi.total_sqft * psi.cost_price 
+            ELSE psi.qty * psi.cost_price 
+        END
+    ),0) 
+    FROM pos_sale_items psi 
+    JOIN pos_sales ps ON psi.sale_id=ps.id 
+    WHERE MONTH(ps.sale_date) = $currM AND YEAR(ps.sale_date) = $currY
+")->fetchColumn();
 $currPOSProfit = $currPOSRev - $currPOSCost;
 
 $currEmp = (float)$pdo->query("SELECT COALESCE(SUM(salary_amount),0) FROM employee_salary_payments WHERE salary_month = $currM AND salary_year = $currY AND status='paid'")->fetchColumn();
 $currOP = (float)$pdo->query("SELECT COALESCE(SUM(grand_total),0) FROM other_purchases WHERE MONTH(purchase_date) = $currM AND YEAR(purchase_date) = $currY")->fetchColumn();
 $currOE = (float)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM monthly_expenses WHERE MONTH(expense_date) = $currM AND YEAR(expense_date) = $currY")->fetchColumn();
+$currOI = (float)$pdo->query("SELECT COALESCE(SUM(amount),0) FROM monthly_incomes WHERE MONTH(income_date) = $currM AND YEAR(income_date) = $currY")->fetchColumn();
 
-$currMonthProfit = $currDelProfit + $currPOSProfit - $currEmp - $currOP - $currOE;
+$currMonthProfit = $currDelProfit + $currPOSProfit - $currEmp - $currOE + $currOI;
 
 $stmtPOSItems = $pdo->prepare("
     SELECT 
@@ -275,7 +325,8 @@ $stmtPOSItems = $pdo->prepare("
             WHEN psi.item_source = 'container' THEN COALESCE(b.name, 'Unknown Brand')
             WHEN psi.item_source = 'other' THEN COALESCE(opi.item_name, 'Other Item')
         END as brand_name, 
-        SUM(psi.qty) as total_qty
+        SUM(psi.qty) as total_qty,
+        SUM(psi.line_total - (CASE WHEN psi.category = 'Glass' THEN psi.total_sqft * psi.cost_price ELSE psi.qty * psi.cost_price END)) as brand_profit
     FROM pos_sale_items psi
     LEFT JOIN container_items ci ON psi.item_source = 'container' AND psi.item_id = ci.id
     LEFT JOIN brands b ON ci.brand_id = b.id
@@ -283,7 +334,7 @@ $stmtPOSItems = $pdo->prepare("
     JOIN pos_sales ps ON psi.sale_id = ps.id
     WHERE $posWhereClause
     GROUP BY brand_name 
-    ORDER BY total_qty DESC 
+    ORDER BY brand_profit DESC 
     LIMIT 10");
 $stmtPOSItems->execute($posParams);
 $pos_items_data = $stmtPOSItems->fetchAll(PDO::FETCH_ASSOC);
@@ -770,8 +821,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
             <div class="glass-card p-8 h-full bg-slate-50 border-violet-200">
                 <div class="flex items-center justify-between mb-8">
                     <div>
-                        <h3 class="text-xl font-black text-slate-900 font-['Outfit']">POS Top Items</h3>
-                        <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-1">Most Sold via Point of Sale</p>
+                        <h3 class="text-xl font-black text-slate-900 font-['Outfit']">POS Brand Profitability</h3>
+                        <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-1">Most Profitable Brands (Line Item Profit)</p>
                     </div>
                 </div>
                 <div class="relative flex justify-center mb-8">
@@ -781,7 +832,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
                     <?php foreach($pos_items_data as $i): ?>
                         <div class="flex items-center justify-between p-3 rounded-2xl bg-white border border-slate-100 shadow-sm">
                             <span class="text-[11px] font-black text-slate-500 uppercase tracking-widest"><?php echo htmlspecialchars($i['brand_name']); ?></span>
-                            <span class="text-xs font-black text-slate-900"><?php echo number_format($i['total_qty']); ?> PKTS</span>
+                            <span class="text-xs font-black text-emerald-600">LKR <?php echo number_format($i['brand_profit'], 2); ?></span>
                         </div>
                     <?php endforeach; ?>
                     <?php if(empty($pos_items_data)): ?><p class="text-center text-xs text-slate-400 italic py-6">No POS sales data yet.</p><?php endif; ?>
@@ -907,9 +958,26 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
                 type: 'doughnut',
                 data: {
                     labels: posItemsData.map(i => i.brand_name),
-                    datasets: [{ data: posItemsData.map(i => i.total_qty), backgroundColor: ['#7c3aed','#a78bfa','#c4b5fd','#8b5cf6','#6d28d9','#ddd6fe','#4c1d95','#ede9fe','#5b21b6','#764ba2'], borderWidth: 0, hoverOffset: 20 }]
+                    datasets: [{ data: posItemsData.map(i => i.brand_profit), backgroundColor: ['#7c3aed','#a78bfa','#c4b5fd','#8b5cf6','#6d28d9','#ddd6fe','#4c1d95','#ede9fe','#5b21b6','#764ba2'], borderWidth: 0, hoverOffset: 20 }]
                 },
-                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { padding: 15, backgroundColor: 'rgba(15,23,42,0.95)', cornerRadius: 12 } }, cutout: '75%' }
+                options: { 
+                    responsive: true, 
+                    maintainAspectRatio: false, 
+                    plugins: { 
+                        legend: { display: false }, 
+                        tooltip: { 
+                            padding: 15, 
+                            backgroundColor: 'rgba(15,23,42,0.95)', 
+                            cornerRadius: 12,
+                            callbacks: {
+                                label: function(ctx) {
+                                    return ctx.label + ': LKR ' + parseFloat(ctx.parsed).toLocaleString('en-LK', {minimumFractionDigits:2});
+                                }
+                            }
+                        } 
+                    }, 
+                    cutout: '75%' 
+                }
             });
         }
         // POS Payment Types Chart

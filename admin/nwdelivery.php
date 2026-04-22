@@ -207,10 +207,12 @@ if ($action == 'save_delivery') {
             foreach ($c['items'] as $item) {
                 $qty = (int)$item['qty'];
                 $dmg = (int)($item['damaged_qty'] ?? 0);
-                $disc = (float)($item['discount'] ?? 0);
-                $line_total = ($qty - $dmg) * (float)$item['selling_price'] - $disc;
+                $disc_per_sqft = (float)($item['discount'] ?? 0);
+                $isqft = (float)($item['square_feet'] ?? 0);
+                $total_discount = $disc_per_sqft * ($qty - $dmg) * $isqft;
+                $line_total = (($qty - $dmg) * $isqft * (float)$item['selling_price']) - $total_discount;
                 $customer_subtotal += $line_total;
-                $customer_discount += $disc;
+                $customer_discount += $total_discount;
                 $source = $item['item_source'] ?? 'container';
                 
                 if ($source === 'container') {
@@ -224,8 +226,8 @@ if ($action == 'save_delivery') {
                     throw new Exception("Insufficient stock for #{$item['item_id']} ({$source}). Please check availability.");
                 }
 
-                $pdo->prepare("INSERT INTO delivery_items (delivery_customer_id, item_id, item_source, qty, damaged_qty, cost_price, selling_price, total) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-                    ->execute([$dc_id, $item['item_id'], $source, $qty, $dmg, (float)$item['cost_price'], (float)$item['selling_price'], $line_total]);
+                $pdo->prepare("INSERT INTO delivery_items (delivery_customer_id, item_id, item_source, qty, damaged_qty, cost_price, selling_price, square_feet, total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                    ->execute([$dc_id, $item['item_id'], $source, $qty, $dmg, (float)$item['cost_price'], (float)$item['selling_price'], $isqft, $line_total]);
             }
             $pdo->prepare("UPDATE delivery_customers SET subtotal = ?, discount = ? WHERE id = ?")->execute([$customer_subtotal, $customer_discount, $dc_id]);
             $grand_total_sales += $customer_subtotal;
@@ -275,7 +277,15 @@ if ($action == 'view_delivery') {
                 CASE 
                     WHEN di.item_source = 'container' THEN (ci.total_qty - ci.sold_qty) 
                     ELSE (opi.qty - opi.sold_qty) 
-                END as available_qty 
+                END as available_qty,
+                CASE 
+                    WHEN di.item_source = 'container' THEN ci.square_feet 
+                    ELSE opi.square_feet 
+                END as source_sqft,
+                CASE 
+                    WHEN di.item_source = 'container' THEN c.per_sheet_cost 
+                    ELSE opi.price_per_item 
+                END as per_sheet_cost
                 FROM delivery_items di 
                 LEFT JOIN container_items ci ON di.item_id = ci.id AND di.item_source = 'container'
                 LEFT JOIN brands b ON ci.brand_id = b.id 
@@ -287,7 +297,7 @@ if ($action == 'view_delivery') {
             $items->execute([$cr['id']]);
             $cr['items'] = $items->fetchAll(PDO::FETCH_ASSOC);
 
-            $payments = $pdo->prepare("SELECT dp.*, b.name as bank_name, b.account_number as bank_acc, dp.cheque_payer_name as cheque_payer FROM delivery_payments dp LEFT JOIN banks b ON dp.bank_id = b.id WHERE dp.delivery_customer_id = ? ORDER BY dp.payment_date DESC");
+            $payments = $pdo->prepare("SELECT dp.*, b.name as bank_name, b.account_number as bank_acc, dp.cheque_payer_name as cheque_payer, dp.cheque_bank FROM delivery_payments dp LEFT JOIN banks b ON dp.bank_id = b.id WHERE dp.delivery_customer_id = ? ORDER BY dp.payment_date DESC");
             $payments->execute([$cr['id']]);
             $cr['payments'] = $payments->fetchAll(PDO::FETCH_ASSOC);
             $cr['total_paid'] = array_sum(array_column($cr['payments'], 'amount'));
@@ -356,6 +366,7 @@ if ($action == 'save_payment') {
         $date = $_POST['date'];
         $bank_id = !empty($_POST['bank_id']) ? $_POST['bank_id'] : null;
         $chq_no = $_POST['chq_no'] ?: null;
+        $chq_bank = $_POST['chq_bank'] ?: null;
         $chq_payer = $_POST['chq_payer'] ?: null;
         
         $proof = null;
@@ -365,8 +376,8 @@ if ($action == 'save_payment') {
             move_uploaded_file($_FILES['proof']['tmp_name'], '../uploads/payments/' . $proof);
         }
 
-        $stmt = $pdo->prepare("INSERT INTO delivery_payments (delivery_customer_id, amount, payment_type, bank_id, cheque_number, proof_image, payment_date, cheque_payer_name, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        $stmt->execute([$dc_id, $amount, $type, $bank_id, $chq_no, $proof, $date, $chq_payer, $user_id]);
+        $stmt = $pdo->prepare("INSERT INTO delivery_payments (delivery_customer_id, amount, payment_type, bank_id, cheque_number, cheque_bank, proof_image, payment_date, cheque_payer_name, recorded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt->execute([$dc_id, $amount, $type, $bank_id, $chq_no, $chq_bank, $proof, $date, $chq_payer, $user_id]);
         
         // Update customer payment status if fully paid
         $stmt = $pdo->prepare("SELECT dc.subtotal, dc.discount, (SELECT SUM(amount) FROM delivery_payments WHERE delivery_customer_id = dc.id) as total_paid FROM delivery_customers dc WHERE dc.id = ?");
@@ -477,7 +488,7 @@ $fullQuery = "SELECT * FROM (
     (SELECT GROUP_CONCAT(u.full_name SEPARATOR ', ') FROM delivery_employees de JOIN users u ON de.user_id = u.id WHERE de.delivery_id = d.id) as employee_names,
     (SELECT IFNULL(SUM(subtotal - discount), 0) FROM delivery_customers WHERE delivery_id = d.id) as total_revenue,
     (SELECT IFNULL(SUM(amount), 0) FROM delivery_payments dp JOIN delivery_customers dc ON dp.delivery_customer_id = dc.id WHERE dc.delivery_id = d.id) as got_payments,
-    (d.total_sales - d.total_expenses - IFNULL((SELECT SUM(di.qty * di.cost_price) FROM delivery_items di JOIN delivery_customers dc ON di.delivery_customer_id = dc.id WHERE dc.delivery_id = d.id), 0)) as est_profit
+    (d.total_sales - d.total_expenses - IFNULL((SELECT SUM(di.qty * di.square_feet * di.cost_price) FROM delivery_items di JOIN delivery_customers dc ON di.delivery_customer_id = dc.id WHERE dc.delivery_id = d.id), 0)) as est_profit
     FROM deliveries d $whereClause
 ) as t $tWhereClause";
 
@@ -775,6 +786,7 @@ $deliveries = $stmt->fetchAll();
                             <div class="flex items-center gap-2">
                                 <button type="button" onclick="addQuickExpense('Fuel')" class="text-[9px] font-bold text-slate-500 bg-white border border-slate-200 px-3 py-1.5 rounded-xl hover:bg-indigo-50 hover:text-indigo-600 transition-all">Fuel</button>
                                 <button type="button" onclick="addQuickExpense('Accommodation')" class="text-[9px] font-bold text-slate-500 bg-white border border-slate-200 px-3 py-1.5 rounded-xl hover:bg-indigo-50 hover:text-indigo-600 transition-all">Accomm.</button>
+                                <button type="button" onclick="addQuickExpense('Highway')" class="text-[9px] font-bold text-slate-500 bg-white border border-slate-200 px-3 py-1.5 rounded-xl hover:bg-indigo-50 hover:text-indigo-600 transition-all ml-1">Highway</button>
                                 <button type="button" onclick="addQuickExpense('Meals')" class="text-[9px] font-bold text-slate-500 bg-white border border-slate-200 px-3 py-1.5 rounded-xl hover:bg-indigo-50 hover:text-indigo-600 transition-all">Meals</button>
                                 <button type="button" onclick="addExpenseRow()" class="text-[10px] font-black text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-xl border border-indigo-100 uppercase ml-2">+ Custom</button>
                             </div>
@@ -793,26 +805,26 @@ $deliveries = $stmt->fetchAll();
                 </form>
             </div>
 
-            <div class="p-6 border-t border-white/40 flex items-center justify-between bg-white/40">
-                <div class="flex space-x-10">
+            <div class="p-4 border-t border-white/40 flex items-center justify-between bg-white/40">
+                <div class="flex space-x-6 items-center">
                     <div>
-                        <p class="text-[10px] uppercase font-black text-slate-600 tracking-widest mb-1">Delivery Expenses</p>
-                        <p id="total_expenses_display" class="text-2xl font-black text-rose-600 tracking-tighter">LKR 0.00</p>
+                        <p class="text-[8px] uppercase font-black text-slate-500 tracking-widest mb-1 leading-tight">Delivery<br/>Expenses</p>
+                        <p id="total_expenses_display" class="text-base font-black text-rose-600 tracking-tighter whitespace-nowrap leading-none">LKR 0.00</p>
                     </div>
-                    <div>
-                        <p class="text-[10px] uppercase font-black text-slate-600 tracking-widest mb-1">Estimated Revenue</p>
-                        <p id="total_sales_display" class="text-2xl font-black text-emerald-600 tracking-tighter">LKR 0.00</p>
+                    <div class="border-l border-slate-200 pl-6">
+                        <p class="text-[8px] uppercase font-black text-slate-500 tracking-widest mb-1 leading-tight">Estimated Revenue</p>
+                        <p id="total_sales_display" class="text-base font-black text-emerald-600 tracking-tighter whitespace-nowrap leading-none">LKR 0.00</p>
                     </div>
-                    <div class="border-l-2 border-slate-200 pl-10">
-                        <p class="text-[10px] uppercase font-black text-indigo-700 tracking-widest mb-1">Est. Delivery Profit</p>
-                        <p id="total_profit_display" class="text-2xl font-black text-indigo-600 tracking-tighter">LKR 0.00</p>
+                    <div class="border-l border-slate-200 pl-6">
+                        <p class="text-[8px] uppercase font-black text-indigo-600 tracking-widest mb-1 leading-tight">Est. Delivery Profit</p>
+                        <p id="total_profit_display" class="text-base font-black text-indigo-600 tracking-tighter whitespace-nowrap leading-none">LKR 0.00</p>
                     </div>
                 </div>
-                <div class="flex space-x-3">
-                    <button onclick="closeModal()" class="px-6 py-3 font-bold text-rose-400 hover:text-rose-600 uppercase text-[10px] tracking-widest">Discard Changes</button>
-                    <button onclick="processRouteSave()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest shadow-2xl shadow-indigo-600/30 transition-all active:scale-95 flex items-center gap-3">
-                        <i class="fa-solid fa-paper-plane text-[10px]"></i>
-                        <span>Authorize Delivery</span>
+                <div class="flex space-x-4 items-center">
+                    <button onclick="closeModal()" class="font-black text-rose-400 hover:text-rose-600 uppercase text-[8px] tracking-widest text-right leading-tight">Discard<br/>Changes</button>
+                    <button onclick="processRouteSave()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-xl font-black text-[9px] uppercase tracking-widest shadow-lg shadow-indigo-600/30 transition-all active:scale-95 flex items-center gap-3">
+                        <i class="fa-solid fa-paper-plane text-[9px]"></i>
+                        <span class="text-left leading-tight">Authorize<br/>Delivery</span>
                     </button>
                 </div>
             </div>
@@ -887,10 +899,28 @@ $deliveries = $stmt->fetchAll();
                     </div>
                 </div>
 
+                <!-- Cheque Info (Conditional) -->
+                <div id="cheque_section" class="hidden space-y-4 pt-2">
+                    <div>
+                        <label class="text-[10px] uppercase font-black text-slate-500 tracking-widest ml-1 mb-1.5 block">Bank Name (of Cheque)</label>
+                        <input type="text" name="chq_bank" placeholder="e.g. BOC / Sampath" class="input-glass w-full h-[48px] font-bold">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="text-[10px] uppercase font-black text-slate-500 tracking-widest ml-1 mb-1.5 block">Cheque Number</label>
+                            <input type="text" name="chq_no" class="input-glass w-full h-[48px] font-bold">
+                        </div>
+                        <div>
+                            <label class="text-[10px] uppercase font-black text-slate-500 tracking-widest ml-1 mb-1.5 block">Payer (Client)</label>
+                            <input type="text" name="chq_payer" placeholder="Enter name (Optional)" class="input-glass w-full h-[48px] font-bold">
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Bank Info (Conditional) -->
                 <div id="bank_section" class="hidden space-y-4 pt-2">
                     <div class="relative">
-                        <label class="text-[10px] uppercase font-black text-slate-500 tracking-widest ml-1 mb-1.5 block">Target Bank Account</label>
+                        <label class="text-[10px] uppercase font-black text-slate-500 tracking-widest ml-1 mb-1.5 block">Target Bank Account (Optional)</label>
                         <div class="flex gap-2">
                             <div class="relative flex-1">
                                 <input type="text" id="bank_search" placeholder="Search saved banks..." class="input-glass w-full h-[48px] font-bold" onkeyup="searchBanks(this.value)">
@@ -901,20 +931,6 @@ $deliveries = $stmt->fetchAll();
                             </button>
                         </div>
                         <input type="hidden" name="bank_id" id="selected_bank_id">
-                    </div>
-                </div>
-
-                <!-- Cheque Info (Conditional) -->
-                <div id="cheque_section" class="hidden space-y-4 pt-2">
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <label class="text-[10px] uppercase font-black text-slate-500 tracking-widest ml-1 mb-1.5 block">Cheque Number</label>
-                            <input type="text" name="chq_no" class="input-glass w-full h-[48px] font-bold">
-                        </div>
-                        <div>
-                            <label class="text-[10px] uppercase font-black text-slate-500 tracking-widest ml-1 mb-1.5 block">Payer (Client)</label>
-                            <input type="text" name="chq_payer" placeholder="Enter name (Optional)" class="input-glass w-full h-[48px] font-bold">
-                        </div>
                     </div>
                 </div>
 
@@ -1118,15 +1134,18 @@ $deliveries = $stmt->fetchAll();
                                         const elPrice = row.querySelector('.item-price'); if(elPrice) elPrice.value = item.selling_price || 0;
                                         const elDiscount = row.querySelector('.item-discount'); if(elDiscount) elDiscount.value = item.discount || 0;
                                         const elCost = row.querySelector('.cost-price'); if(elCost) elCost.value = item.cost_price || 0;
+                                        const elSqft = row.querySelector('.item-sqft'); if(elSqft) elSqft.value = item.square_feet || item.source_sqft || 0;
+                                        const elSheetCost = row.querySelector('.sheet-cost'); if(elSheetCost) elSheetCost.value = item.per_sheet_cost || 0;
                                         
                                         const elBillNo = block.querySelector('.bill-number'); if(elBillNo) elBillNo.value = c.bill_number || '';
                                         
                                         const stockDiv = row.querySelector('.stock-info');
                                         if(stockDiv) {
                                             const bgs = stockDiv.querySelectorAll('span');
-                                            if(bgs.length >= 2) { 
+                                            if(bgs.length >= 3) { 
                                                 bgs[0].innerHTML = `<i class="fa-solid fa-box-archive mr-1"></i> Stock: ${item.available_qty || 0} PKTS`;
-                                                bgs[1].innerHTML = `<i class="fa-solid fa-coins mr-1"></i> Unit Cost: LKR ${item.cost_price || 0}`;
+                                                bgs[1].innerHTML = `<i class="fa-solid fa-expand mr-1"></i> ${parseFloat(item.square_feet || item.source_sqft || 0).toFixed(3)} SQFT`;
+                                                bgs[2].innerHTML = `<i class="fa-solid fa-coins mr-1"></i> Cost: LKR ${item.cost_price || 0} (SQFT)`;
                                                 stockDiv.classList.remove('hidden');
                                             }
                                         }
@@ -1348,7 +1367,7 @@ $deliveries = $stmt->fetchAll();
                             <div class="col-span-1"><span class="text-[8px] uppercase font-black text-slate-400 tracking-wider">Sheets Qty</span></div>
                             <div class="col-span-2"><span class="text-[8px] uppercase font-black text-slate-400 tracking-wider">Selling</span></div>
                             <div class="col-span-2"><span class="text-[8px] uppercase font-black text-red-600 tracking-wider">Damaged</span></div>
-                            <div class="col-span-2"><span class="text-[8px] uppercase font-black text-slate-400 tracking-wider">Discount</span></div>
+                            <div class="col-span-2"><span class="text-[8px] uppercase font-black text-slate-400 tracking-wider">Disc. / SQFT</span></div>
                         </div>
 
                         <div class="order-items space-y-3 md:space-y-1"></div>
@@ -1457,8 +1476,9 @@ $deliveries = $stmt->fetchAll();
                         <div class="col-span-2 md:col-span-2">
                             <input type="number" placeholder="Dmg" class="input-glass w-full h-[36px] text-[10px] font-bold item-dmg border-red-100 text-red-600" onkeyup="calculateTotals()" title="Damaged Qty">
                         </div>
-                        <div class="col-span-3 md:col-span-2">
-                            <input type="number" placeholder="0.00" class="input-glass w-full h-[36px] text-[10px] font-bold item-discount" onkeyup="calculateTotals()" title="Discount">
+                        <div class="col-span-3 md:col-span-2 relative">
+                            <input type="number" placeholder="0.00" class="input-glass w-full h-[36px] text-[10px] font-bold item-discount" onkeyup="calculateTotals()" title="Discount per SQFT">
+                            <div class="absolute -top-2.5 right-2 bg-indigo-100 text-indigo-700 text-[8px] font-black px-1 rounded uppercase">/ SQFT</div>
                         </div>
                         <div class="col-span-1 text-center text-slate-300 hover:text-rose-500 cursor-pointer" onmousedown="document.getElementById('item-${id}').remove(); calculateTotals();">
                             <i class="fa-solid fa-minus-circle text-[10px]"></i>
@@ -1649,6 +1669,7 @@ $deliveries = $stmt->fetchAll();
 
             let totalRev = 0;
             let totalCost = 0;
+            let totalDamageLoss = 0;
             
             document.querySelectorAll('#customer_blocks .glass-card').forEach(block => {
                 let customerSubtotal = 0;
@@ -1661,7 +1682,6 @@ $deliveries = $stmt->fetchAll();
                     const dmg = parseFloat(row.querySelector('.item-dmg').value) || 0;
                     const disc = parseFloat(row.querySelector('.item-discount').value) || 0;
 
-                    // Warning for over-stock
                     if (q > maxQ) {
                         qtyInput.classList.add('qty-warning');
                         qtyInput.title = `Warning: Only ${maxQ} available in stock!`;
@@ -1670,18 +1690,22 @@ $deliveries = $stmt->fetchAll();
                         qtyInput.title = "";
                     }
                     
-                    const lineTotal = ((q - dmg) * p) - disc;
+                    const sqft = parseFloat(row.querySelector('.item-sqft').value) || 0;
+                    const discPerSqft = parseFloat(row.querySelector('.item-discount').value) || 0;
+                    const totalDiscount = discPerSqft * (q - dmg) * sqft;
+                    const lineTotal = ((q - dmg) * sqft * p) - totalDiscount;
                     customerSubtotal += lineTotal;
                     totalRev += lineTotal;
-                    totalCost += (q * cp);
+                    totalCost += ((q - dmg) * sqft * cp);
+                    totalDamageLoss += (dmg * sqft * cp);
                 });
                 const subtotalEl = block.querySelector('.customer-subtotal');
                 if(subtotalEl) subtotalEl.innerText = `LKR ${customerSubtotal.toLocaleString()}`;
             });
             
-            const estProfit = totalRev - totalCost - totalExp;
-            document.getElementById('total_sales_display').innerText = `LKR ${totalRev.toLocaleString()}`;
-            document.getElementById('total_profit_display').innerText = `LKR ${estProfit.toLocaleString()}`;
+            const estProfit = totalRev - totalCost - totalDamageLoss - totalExp;
+            document.getElementById('total_sales_display').innerText = `LKR ${totalRev.toLocaleString(undefined, {minimumFractionDigits: 2})}`;
+            document.getElementById('total_profit_display').innerText = `LKR ${estProfit.toLocaleString(undefined, {minimumFractionDigits: 2})}`;
             
             // Color coding for profit
             const profitEl = document.getElementById('total_profit_display');
@@ -1717,9 +1741,10 @@ $deliveries = $stmt->fetchAll();
                     const q = r.querySelector('.item-qty').value;
                     const p = r.querySelector('.item-price').value;
                     const cp = r.querySelector('.cost-price').value;
+                    const isqft = r.querySelector('.item-sqft').value;
                     const dmg = r.querySelector('.item-dmg').value;
                     const disc = r.querySelector('.item-discount').value;
-                    if(iid && q && p) items.push({item_id: iid, item_source: itemsource, qty: q, selling_price: p, cost_price: cp, damaged_qty: dmg, discount: disc});
+                    if(iid && q && p) items.push({item_id: iid, item_source: itemsource, qty: q, selling_price: p, cost_price: cp, square_feet: isqft, damaged_qty: dmg, discount: disc});
                 });
                 
                 const billNo = b.querySelector('.bill-number').value;
@@ -1845,8 +1870,11 @@ $deliveries = $stmt->fetchAll();
                                                                 ${p.bank_name ? `
                                                                     <p class="text-slate-900 leading-none mb-1">${p.bank_name}</p>
                                                                     <p class="text-[9px] text-slate-400 font-bold uppercase">${p.bank_acc}</p>
-                                                                ` : '<span class="text-slate-300 italic font-medium">N/A</span>'}
+                                                                ` : ''}
+                                                                ${p.cheque_bank ? `<p class="text-slate-900 leading-none mb-1 font-bold text-[10px] uppercase">${p.cheque_bank}</p>` : ''}
+                                                                ${!p.bank_name && !p.cheque_bank ? '<span class="text-slate-300 italic font-medium">N/A</span>' : ''}
                                                                 ${p.cheque_payer ? `<p class="text-[9px] text-indigo-500 font-black mt-1 uppercase tracking-tighter">Payer: ${p.cheque_payer}</p>` : ''}
+                                                                ${p.cheque_number ? `<p class="text-[9px] text-slate-400 font-bold mt-0.5">CHQ: ${p.cheque_number}</p>` : ''}
                                                             </td>
                                                             <td class="py-3 px-2 text-center">
                                                                 ${p.proof_image ? `

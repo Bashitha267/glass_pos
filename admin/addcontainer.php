@@ -14,6 +14,96 @@ $user_id = $_SESSION['user_id'];
 // Handle AJAX Actions
 $action = $_GET['action'] ?? $_POST['action'] ?? null;
 
+if ($action == 'get_shop_details') {
+    $itemId = $_GET['item_id'];
+    $source = $_GET['source'];
+    
+    // Get current shop inventory
+    $stmt = $pdo->prepare("SELECT * FROM shop_inventory WHERE item_id = ? AND item_source = ?");
+    $stmt->execute([$itemId, $source]);
+    $shop = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    // Get history
+    $history = [];
+    if ($shop) {
+        $stmt = $pdo->prepare("SELECT * FROM shop_inventory_history WHERE shop_inventory_id = ? ORDER BY added_at DESC");
+        $stmt->execute([$shop['id']]);
+        $history = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+    
+    echo json_encode(['success' => true, 'shop' => $shop, 'history' => $history]);
+    exit;
+}
+
+if ($action == 'add_to_shop') {
+    $itemId = $_POST['item_id'];
+    $source = $_POST['source'];
+    $sheets = (int)$_POST['sheets'];
+    $sellingPrice = (float)$_POST['selling_price'];
+    $costPrice = (float)$_POST['cost_price'];
+    $category = $_POST['category'];
+    $brandName = $_POST['brand_name'];
+    $sqftPerSheet = (float)$_POST['sqft_per_sheet'];
+    
+    try {
+        $pdo->beginTransaction();
+        
+        // 1. Check if exists
+        $stmt = $pdo->prepare("SELECT id FROM shop_inventory WHERE item_id = ? AND item_source = ?");
+        $stmt->execute([$itemId, $source]);
+        $existing = $stmt->fetch();
+        
+        if ($existing) {
+            $pdo->prepare("UPDATE shop_inventory SET full_sheets_qty = full_sheets_qty + ?, total_sheets_added = total_sheets_added + ?, updated_at = NOW() WHERE id = ?")
+                ->execute([$sheets, $sheets, $existing['id']]);
+            $shopId = $existing['id'];
+        } else {
+            $stmt = $pdo->prepare("INSERT INTO shop_inventory (item_id, item_source, category, brand_name, sqft_per_sheet, selling_price_per_sqft, cost_price_per_sqft, full_sheets_qty, total_sheets_added) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$itemId, $source, $category, $brandName, $sqftPerSheet, $sellingPrice, $costPrice, $sheets, $sheets]);
+            $shopId = $pdo->lastInsertId();
+        }
+        
+        // 2. Add history
+        $pdo->prepare("INSERT INTO shop_inventory_history (shop_inventory_id, sheets_added, cost_price_per_sqft, selling_price_per_sqft) VALUES (?, ?, ?, ?)")
+            ->execute([$shopId, $sheets, $costPrice, $sellingPrice]);
+            
+        // 3. Update source stock
+        if ($source == 'container') {
+            $pdo->prepare("UPDATE container_items SET sold_qty = sold_qty + ? WHERE id = ?")->execute([$sheets, $itemId]);
+        } else {
+            $pdo->prepare("UPDATE other_purchase_items SET sold_qty = sold_qty + ? WHERE id = ?")->execute([$sheets, $itemId]);
+        }
+            
+        $pdo->commit();
+        echo json_encode(['success' => true]);
+    } catch (Exception $e) {
+        $pdo->rollBack();
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    }
+    exit;
+}
+
+if ($action == 'get_items_for_shop') {
+    $id = $_GET['id'];
+    $source = $_GET['source'];
+    $items = [];
+    if ($source == 'container') {
+        $cStmt = $pdo->prepare("SELECT per_item_cost FROM containers WHERE id = ?");
+        $cStmt->execute([$id]);
+        $cost = $cStmt->fetchColumn() ?: 0;
+        
+        $stmt = $pdo->prepare("SELECT ci.id, b.name as item_name, ci.total_qty, ci.sold_qty, ci.square_feet, ci.pallets, ci.qty_per_pallet, ? as price_per_sqft FROM container_items ci JOIN brands b ON ci.brand_id = b.id WHERE ci.container_id = ?");
+        $stmt->execute([$cost, $id]);
+        $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } else {
+        $stmt = $pdo->prepare("SELECT id, item_name, qty as total_qty, sold_qty, square_feet, pallets, qty_per_pallet, price_per_sqft FROM other_purchase_items WHERE purchase_id = ? AND category = 'Glass'");
+        $stmt->execute([$id]);
+        $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+    echo json_encode(['success' => true, 'items' => $items]);
+    exit;
+}
+
 if ($action == 'get_next_number') {
     $stmt = $pdo->query("SELECT container_number FROM containers ORDER BY id DESC LIMIT 1");
     $last = $stmt->fetchColumn();
@@ -172,16 +262,32 @@ if ($action == 'save_purchase') {
         $purchase_id = $stmt->fetchColumn();
 
         // Items
+        // First delete existing shop entries for non-glass items of this purchase to avoid duplicates on update
+        $pdo->prepare("DELETE FROM shop_inventory WHERE item_source = 'other' AND item_id IN (SELECT id FROM other_purchase_items WHERE purchase_id = ? AND category != 'Glass')")->execute([$purchase_id]);
+        
         $pdo->prepare("DELETE FROM other_purchase_items WHERE purchase_id = ?")->execute([$purchase_id]);
         foreach ($items as $it) {
-            $qty = (float) $it['qty'];
+            $pallets = (int) ($it['pallets'] ?? 0);
+            $qty_per_pallet = (int) ($it['qty_per_pallet'] ?? 0);
+            $qty = $pallets > 0 ? ($pallets * $qty_per_pallet) : (float) ($it['qty'] ?? 0);
             $sqft = (float) $it['sqft'];
             $price = (float) $it['price'];
+            $price_sqft = (float) ($it['price_per_sqft'] ?? 0);
+            $total_sqft = (float) ($it['total_sqft'] ?? 0);
             $category = $it['category'] ?? 'Other';
             $lineTotal = $qty * $price;
             if (empty($it['name']) || $qty <= 0)
                 continue;
-            $pdo->prepare("INSERT INTO other_purchase_items (purchase_id, item_name, category, qty, square_feet, price_per_item, line_total) VALUES (?, ?, ?, ?, ?, ?, ?)")->execute([$purchase_id, $it['name'], $category, $qty, $sqft, $price, $lineTotal]);
+            $pdo->prepare("INSERT INTO other_purchase_items (purchase_id, item_name, category, pallets, qty_per_pallet, qty, square_feet, price_per_item, price_per_sqft, total_sqft, line_total, sold_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                ->execute([$purchase_id, $it['name'], $category, $pallets, $qty_per_pallet, $qty, $sqft, $price, $price_sqft, $total_sqft, $lineTotal, ($category !== 'Glass' ? $qty : 0)]);
+            
+            // Auto-push to shop if not Glass
+            if ($category !== 'Glass') {
+                $newItemId = $pdo->lastInsertId();
+                $stmt = $pdo->prepare("INSERT INTO shop_inventory (item_id, item_source, category, brand_name, sqft_per_sheet, full_sheets_qty, total_sheets_added, selling_price_per_sqft, cost_price_per_sqft) VALUES (?, 'other', ?, ?, ?, ?, ?, ?, ?)");
+                // For non-glass items, selling and cost price should be the per-item price
+                $stmt->execute([$newItemId, $category, $it['name'], $sqft, $qty, $qty, $price, $price]);
+            }
         }
 
         // Expenses
@@ -474,12 +580,35 @@ if ($current_tab === 'other') {
 
     $query = "SELECT *, 
               (SELECT GROUP_CONCAT(item_name SEPARATOR ', ') FROM other_purchase_items WHERE purchase_id = other_purchases.id) as item_names,
+              (SELECT category FROM other_purchase_items WHERE purchase_id = other_purchases.id LIMIT 1) as primary_category,
+              (SELECT price_per_sqft FROM other_purchase_items WHERE purchase_id = other_purchases.id LIMIT 1) as unit_cost_sqft,
+              (SELECT price_per_item FROM other_purchase_items WHERE purchase_id = other_purchases.id LIMIT 1) as unit_cost_item,
+              (SELECT COUNT(*) FROM other_purchase_items WHERE purchase_id = other_purchases.id AND category = 'Glass') as glass_count,
               (SELECT SUM(qty) FROM other_purchase_items WHERE purchase_id = other_purchases.id) as total_qty,
               (SELECT SUM(qty - sold_qty) FROM other_purchase_items WHERE purchase_id = other_purchases.id) as available_qty,
               COALESCE((SELECT SUM(amount) FROM other_purchase_payments WHERE purchase_id = other_purchases.id), 0) as total_paid
               FROM other_purchases 
               $whereClause 
               ORDER BY id DESC LIMIT $limit OFFSET $offset";
+    $stmt = $pdo->prepare($query);
+    $stmt->execute($params);
+    $records = $stmt->fetchAll();
+} elseif ($current_tab === 'shop') {
+    if ($search) {
+        $where[] = "(brand_name LIKE ? OR category LIKE ?)";
+        $params[] = "%$search%";
+        $params[] = "%$search%";
+    }
+    
+    $where[] = "category != 'Other'";
+    $whereClause = $where ? "WHERE " . implode(" AND ", $where) : "";
+
+    $countStmt = $pdo->prepare("SELECT COUNT(*) FROM shop_inventory $whereClause");
+    $countStmt->execute($params);
+    $total_records = $countStmt->fetchColumn();
+    $total_pages = ceil($total_records / $limit);
+
+    $query = "SELECT * FROM shop_inventory $whereClause ORDER BY updated_at DESC LIMIT $limit OFFSET $offset";
     $stmt = $pdo->prepare($query);
     $stmt->execute($params);
     $records = $stmt->fetchAll();
@@ -678,6 +807,8 @@ if ($current_tab === 'other') {
             <a href="?tab=other"
                 class="tab-btn <?php echo $current_tab === 'other' ? 'active' : ''; ?>">Other
                 Purchases</a>
+            <a href="?tab=shop"
+                class="tab-btn <?php echo $current_tab === 'shop' ? 'active' : ''; ?>">Shop Inventory</a>
         </div>
     </header>
 
@@ -694,7 +825,7 @@ if ($current_tab === 'other') {
                     <div class="relative">
                         <i class="fa-solid fa-search absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"></i>
                         <input type="text" name="search" value="<?php echo htmlspecialchars($search); ?>"
-                            placeholder="<?php echo $current_tab === 'other' ? 'ID, Buyer, Item...' : 'ID or Brand...'; ?>"
+                            placeholder="<?php echo $current_tab === 'other' ? 'ID, Buyer, Item...' : ($current_tab === 'shop' ? 'Brand or Category...' : 'ID or Brand...'); ?>"
                             class="px-3 py-2 rounded-xl outline-none transition-all border focus:border-cyan-500 w-full pl-10 bg-slate-900/40 border-slate-700 text-white placeholder:text-slate-500 focus:ring-2 focus:ring-cyan-500/50 auto-search">
                     </div>
                 </div>
@@ -747,12 +878,23 @@ if ($current_tab === 'other') {
                                 <th class="px-3 py-4 font-black">Item Names</th>
                                 <th class="px-3 py-4 font-black">Bill / Invoice</th>
                                 <th class="px-3 py-4 font-black">Date</th>
+                                <th class="px-3 py-4 font-black text-emerald-400">Unit Cost</th>
                                 <th class="px-3 py-4 font-black text-indigo-100">Total Qty</th>
                                 <th class="px-3 py-4 font-black text-white">Avl Qty</th>
                                 <th class="px-3 py-4 font-black text-indigo-100">Total</th>
                                 <th class="px-3 py-4 font-black text-emerald-400">Paid</th>
                                 <th class="px-3 py-4 font-black text-rose-400">Remain</th>
                                 <th class="px-3 py-4 font-black">Status</th>
+                                <th class="px-3 py-4 text-center font-black">Action</th>
+                            </tr>
+                        <?php elseif ($current_tab === 'shop'): ?>
+                            <tr class="bg-indigo-900 text-[12px] uppercase tracking-wider text-white border-b border-indigo-800">
+                                <th class="px-3 py-4 font-black">Item Name</th>
+                                <th class="px-3 py-4 font-black">Date Added</th>
+                                <th class="px-3 py-4 font-black text-indigo-100">Total Added</th>
+                                <th class="px-3 py-4 font-black text-white">Remaining Full</th>
+                                <th class="px-3 py-4 font-black text-indigo-100">Remaining Partial</th>
+                                <th class="px-3 py-4 font-black text-emerald-400">Price / SQFT</th>
                                 <th class="px-3 py-4 text-center font-black">Action</th>
                             </tr>
                         <?php else: ?>
@@ -776,7 +918,7 @@ if ($current_tab === 'other') {
                     <tbody class="divide-y divide-slate-100">
                         <?php if (empty($records)): ?>
                             <tr>
-                                <td colspan="12" class="px-6 py-10 text-center text-slate-500 italic">No records found
+                                <td colspan="13" class="px-6 py-10 text-center text-slate-500 italic">No records found
                                     matching your
                                     criteria.</td>
                             </tr>
@@ -802,6 +944,15 @@ if ($current_tab === 'other') {
                                     </td>
                                     <td class="px-3 py-4 text-sm text-slate-500">
                                         <?php echo date('Y-m-d', strtotime($r['purchase_date'])); ?>
+                                    </td>
+                                    <td class="px-3 py-4 text-sm font-bold text-emerald-600">
+                                        <?php if ($r['primary_category'] === 'Glass'): ?>
+                                            <span class="text-[10px] text-slate-400 block uppercase">Per Sqft</span>
+                                            Rs. <?php echo number_format($r['unit_cost_sqft'], 2); ?>
+                                        <?php else: ?>
+                                            <span class="text-[10px] text-slate-400 block uppercase">Per Item</span>
+                                            Rs. <?php echo number_format($r['unit_cost_item'], 2); ?>
+                                        <?php endif; ?>
                                     </td>
                                     <td class="px-3 py-4 text-sm font-semibold text-slate-700">
                                         <?php echo number_format($r['total_qty']); ?>
@@ -832,6 +983,12 @@ if ($current_tab === 'other') {
                                     </td>
                                     <td class="px-3 py-4 text-center">
                                         <div class="flex items-center justify-center gap-2">
+                                            <?php if ($r['glass_count'] > 0): ?>
+                                                <button onclick="openShopSelectModal(<?php echo $r['id']; ?>, 'other')"
+                                                    class="bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-indigo-600 hover:text-white transition-all">
+                                                    Shop
+                                                </button>
+                                            <?php endif; ?>
                                             <button onclick="editPurchase(<?php echo $r['id']; ?>)"
                                                 class="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all">
                                                 Update
@@ -842,6 +999,35 @@ if ($current_tab === 'other') {
                                                 Delete
                                             </button>
                                         </div>
+                                    </td>
+                                </tr>
+                            <?php elseif ($current_tab === 'shop'): ?>
+                                <tr class="bg-white hover:bg-slate-50 transition-colors border-b border-slate-100">
+                                    <td class="px-3 py-4">
+                                        <div class="text-sm font-bold text-slate-800"><?php echo htmlspecialchars($r['brand_name']); ?></div>
+                                        <div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest"><?php echo htmlspecialchars($r['category']); ?></div>
+                                    </td>
+                                    <td class="px-3 py-4 text-sm text-slate-500">
+                                        <?php echo date('Y-m-d', strtotime($r['created_at'])); ?>
+                                    </td>
+                                    <td class="px-3 py-4 text-sm font-semibold text-slate-700">
+                                        <?php echo number_format($r['total_sheets_added']); ?> <?php echo $r['category'] === 'Glass' ? 'Sheets' : 'Qty'; ?>
+                                    </td>
+                                    <td class="px-3 py-4 text-sm font-bold text-indigo-600">
+                                        <?php echo number_format($r['full_sheets_qty']); ?> <?php echo $r['category'] === 'Glass' ? 'Sheets' : 'Qty'; ?>
+                                    </td>
+                                    <td class="px-3 py-4 text-sm font-bold text-slate-800">
+                                        <?php echo $r['category'] === 'Glass' ? number_format($r['partial_sqft_qty'], 2) . ' SQFT' : '-'; ?>
+                                    </td>
+                                    <td class="px-3 py-4 text-sm font-bold text-emerald-600">
+                                        Rs. <?php echo number_format($r['selling_price_per_sqft'], 2); ?>
+                                        <span class="text-[10px] text-slate-400 font-bold uppercase tracking-widest ml-1"><?php echo $r['category'] === 'Glass' ? '/ SQFT' : '/ Qty'; ?></span>
+                                    </td>
+                                    <td class="px-3 py-4 text-center">
+                                        <button onclick="openShopSelectModal(<?php echo $r['item_id']; ?>, '<?php echo $r['item_source']; ?>')"
+                                                class="bg-indigo-600 text-white px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all">
+                                            Manage
+                                        </button>
                                     </td>
                                 </tr>
                             <?php else:
@@ -889,6 +1075,10 @@ if ($current_tab === 'other') {
                                     </td>
                                     <td class="px-3 py-4 text-center">
                                         <div class="flex items-center justify-center gap-2">
+                                            <button onclick="openShopSelectModal(<?php echo $r['id']; ?>, 'container')"
+                                                class="bg-cyan-50 text-cyan-700 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-cyan-600 hover:text-white transition-all shadow-lg shadow-cyan-600/5">
+                                                Shop
+                                            </button>
                                             <button onclick="editContainer('<?php echo $r['container_number']; ?>')"
                                                 class="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-lg shadow-emerald-600/10">
                                                 Update
@@ -1123,7 +1313,7 @@ if ($current_tab === 'other') {
     <div id="purchase-modal-container"
         class="fixed inset-0 bg-black/40 backdrop-blur-[3px] z-50 flex items-center justify-center p-2 sm:p-4 hidden">
         <div
-            class="container-modal w-full max-w-6xl max-h-[95vh] overflow-y-auto rounded-[20px] sm:rounded-[30px] shadow-2xl">
+            class="container-modal w-full max-w-[98vw] max-h-[95vh] overflow-y-auto rounded-[20px] sm:rounded-[30px] shadow-2xl">
             <div class="p-4 sm:p-8">
                 <div class="flex items-center justify-between mb-6 sm:mb-8 text-slate-800">
                     <div>
@@ -1243,6 +1433,130 @@ if ($current_tab === 'other') {
         </div>
     </div>
 
+    <!-- Shop Management Modal -->
+    <div id="shop-modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-md z-[120] hidden flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-4xl rounded-[32px] shadow-2xl overflow-hidden border border-white/20 max-h-[95vh] flex flex-col">
+            <!-- Modal Header -->
+            <div class="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div>
+                    <h3 class="text-base font-black text-slate-800 tracking-tight font-['Outfit']">Shop Management</h3>
+                    <p id="shop-item-display" class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5 italic">Item Details Loading...</p>
+                    <div id="shop-item-switcher" class="flex flex-wrap gap-1.5 mt-2 hidden"></div>
+                </div>
+                <div class="flex items-center gap-3">
+                    <button type="button" onclick="openAddToShopForm()" 
+                            class="bg-indigo-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-black transition-all shadow-xl shadow-indigo-600/20 active:scale-95">
+                        <i class="fa-solid fa-plus mr-1.5"></i> Add Stock
+                    </button>
+                    <button onclick="closeShopModal()" class="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-slate-400 hover:text-rose-500 hover:border-rose-100 transition-all shadow-sm">
+                        <i class="fa-solid fa-times text-base"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="p-6 space-y-6 overflow-y-auto custom-scroll flex-1">
+                <!-- Stats Overview -->
+                <div class="grid grid-cols-3 gap-4">
+                    <div class="bg-slate-900 p-5 rounded-2xl text-white shadow-lg">
+                        <p class="text-[9px] uppercase font-black text-slate-400 mb-1.5 tracking-widest">Available</p>
+                        <p id="shop-disp-sheets" class="text-xl font-black tracking-tight">0</p>
+                        <div class="flex items-center gap-1.5 mt-1.5">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                            <span class="text-[9px] font-bold text-slate-400 uppercase">Sheets</span>
+                        </div>
+                    </div>
+                    <div class="bg-indigo-50 p-5 rounded-2xl border border-indigo-100">
+                        <p class="text-[9px] uppercase font-black text-indigo-500 mb-1.5 tracking-widest">Area</p>
+                        <p id="shop-disp-total-sqft" class="text-xl font-black text-indigo-700 tracking-tight">0.00</p>
+                        <p class="text-[9px] font-bold text-indigo-400 mt-0.5 uppercase">SQFT</p>
+                    </div>
+                    <div class="bg-emerald-50 p-5 rounded-2xl border border-emerald-100">
+                        <p class="text-[9px] uppercase font-black text-emerald-600 mb-1.5 tracking-widest">Price</p>
+                        <p id="shop-disp-price" class="text-xl font-black text-emerald-700 tracking-tight">Rs. 0</p>
+                        <p class="text-[9px] font-bold text-emerald-400 mt-0.5 uppercase">Per SQFT</p>
+                    </div>
+                </div>
+
+                <!-- Hidden Form Container -->
+                <div id="add-shop-form-container" class="hidden">
+                    <div class="bg-slate-50 border border-indigo-100 p-6 rounded-2xl relative">
+                        <div class="absolute -top-2.5 left-6 bg-indigo-600 text-white px-3 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest">Movement Entry</div>
+                        <form id="add-shop-form" class="space-y-6">
+                            <input type="hidden" id="shop_item_id">
+                            <input type="hidden" id="shop_item_source">
+                            <input type="hidden" id="shop_item_category">
+                            <input type="hidden" id="shop_item_brand">
+                            <input type="hidden" id="shop_item_sqft_per_sheet">
+                            <input type="hidden" id="shop_item_cost_sqft">
+
+                            <div class="grid grid-cols-2 gap-4 mb-4">
+                                <div class="bg-white p-3 rounded-xl border border-slate-100 shadow-sm">
+                                    <p class="text-[8px] uppercase font-black text-slate-400 mb-0.5 tracking-widest">Cost Per SQFT</p>
+                                    <p id="shop_entry_cost_sqft" class="text-sm font-black text-slate-700">Rs. 0.00</p>
+                                </div>
+                                <div class="bg-white p-3 rounded-xl border border-slate-100 shadow-sm">
+                                    <p class="text-[8px] uppercase font-black text-slate-400 mb-0.5 tracking-widest">Sheet Size</p>
+                                    <p id="shop_entry_sheet_size" class="text-sm font-black text-slate-700">0.00 SQFT</p>
+                                </div>
+                            </div>
+                            
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div class="space-y-1">
+                                    <label class="text-[9px] uppercase font-black text-slate-500 ml-2 block tracking-widest">Sheets to Move</label>
+                                    <input type="number" id="shop_add_sheets" placeholder="0" class="input-glass w-full h-[42px] text-xs font-bold" required>
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="text-[9px] uppercase font-black text-slate-500 ml-2 block tracking-widest">Selling Price (SQFT)</label>
+                                    <input type="number" step="0.01" id="shop_selling_price" placeholder="0.00" class="input-glass w-full h-[42px] text-xs font-bold text-emerald-600" required>
+                                </div>
+                            </div>
+                            
+                            <div class="flex items-center gap-4">
+                                <button type="submit" class="flex-1 bg-slate-900 text-white py-3.5 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-black transition-all shadow-xl shadow-slate-900/20 active:scale-95">Confirm Stock Transfer</button>
+                                <button type="button" onclick="document.getElementById('add-shop-form-container').classList.add('hidden')" class="px-6 py-3.5 text-slate-400 font-bold text-[9px] uppercase hover:text-rose-500 transition-colors">Cancel</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- History Table -->
+                <div class="space-y-4">
+                    <div class="flex items-center justify-between">
+                        <h4 class="text-[11px] uppercase font-black text-slate-600 tracking-widest flex items-center gap-2">
+                            <i class="fa-solid fa-clock-rotate-left text-indigo-500"></i>
+                            Stock Movement History
+                        </h4>
+                        <span class="text-[9px] font-bold text-slate-400 uppercase italic">Recent transfers shown first</span>
+                    </div>
+                    
+                    <div class="bg-white border border-slate-100 rounded-3xl overflow-hidden shadow-sm">
+                        <div class="max-h-[300px] overflow-y-auto custom-scroll">
+                            <table class="w-full text-left">
+                                <thead class="sticky top-0 bg-slate-50/80 backdrop-blur-md z-10">
+                                    <tr class="text-[9px] uppercase font-black text-slate-400 border-b border-slate-100">
+                                        <th class="py-4 px-6">Entry Date</th>
+                                        <th class="py-4 px-6">Quantity</th>
+                                        <th class="py-4 px-6">Cost/SQFT</th>
+                                        <th class="py-4 px-6">Selling/SQFT</th>
+                                        <th class="py-4 px-6">Area Total</th>
+                                        <th class="py-4 px-6 text-right">Potential</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="shop-history-list" class="divide-y divide-slate-50">
+                                    <!-- History populated via JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="p-4 bg-slate-50 border-t border-slate-100 text-center">
+                <p class="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Stock moved to shop will be available for POS sales</p>
+            </div>
+        </div>
+    </div>
+
     <script>
         const modal = document.getElementById('modal-container');
         const itemsList = document.getElementById('items-list');
@@ -1320,10 +1634,20 @@ if ($current_tab === 'other') {
                         <span class="text-[8px] uppercase text-slate-400 font-bold">Total Sqft</span>
                         <span class="row-total-sqft font-bold text-sm text-indigo-600">${data ? (data.pallets * data.qty_per_pallet * data.square_feet).toLocaleString(undefined, {minimumFractionDigits: 2}) : '0.00'}</span>
                     </div>
-                    ${currentMode !== 'view' ? `
-                    <button type="button" onclick="removeRow('item_${rowId}')" class="absolute -right-2 -top-2 bg-rose-500 text-white w-7 h-7 rounded-full text-xs items-center justify-center shadow-lg opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex z-10 transition-all hover:scale-110">
-                        <i class="fa-solid fa-times"></i>
-                    </button>` : ''}
+                    <div class="flex flex-col justify-center items-center gap-2">
+                        ${data && data.id ? `
+                            <button type="button" onclick="prepareShopModal(${data.id}, 'container', this)" 
+                                    class="w-full py-2 bg-indigo-50 text-indigo-600 rounded-lg text-[10px] font-black uppercase tracking-widest border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all shadow-sm">
+                                <i class="fa-solid fa-store mr-1"></i> Shop
+                            </button>
+                        ` : ''}
+                        ${currentMode !== 'view' ? `
+                            <button type="button" onclick="removeRow('item_${rowId}')" class="bg-rose-50 text-rose-500 w-full py-2 rounded-lg text-[10px] font-black uppercase tracking-widest border border-rose-100 hover:bg-rose-500 hover:text-white transition-all">
+                                <i class="fa-solid fa-trash-can mr-1"></i> Remove
+                            </button>
+                        ` : ''}
+                    </div>
+                    <input type="hidden" class="item-id" value="${data ? data.id : ''}">
                 </div>
             `;
             itemsList.insertAdjacentHTML('beforeend', html);
@@ -1797,11 +2121,11 @@ if ($current_tab === 'other') {
             document.body.classList.remove('overflow-hidden');
         }
 
-        function addPurchaseItemRow(name = '', qty = '', sqft = '', price = '', category = 'Other') {
+        function addPurchaseItemRow(name = '', qty = '', sqft = '', price = '', category = 'Other', price_per_sqft = 0, total_sqft = 0, id = null, pallets = '') {
             const rowId = 'p_item_' + Date.now() + Math.random();
             const isGlass = category === 'Glass';
-            const html = `
-                <div class="flex flex-row items-end gap-x-4 bg-slate-50/50 p-6 sm:p-7 rounded-3xl border-2 border-slate-100 relative group w-full p-item-row" id="${rowId}">
+            const html = `                <div class="flex flex-row items-end gap-x-4 bg-slate-50/50 p-6 sm:p-7 rounded-3xl border-2 border-slate-100 relative group w-full p-item-row" id="${rowId}">
+                    <input type="hidden" class="p_item_id" value="${id || ''}">
                     <div class="w-36 flex flex-col space-y-2">
                         <label class="text-xs uppercase font-black text-slate-500 ml-1">Category</label>
                         <select class="p_item_category input-glass h-[52px] text-base font-bold" onchange="togglePurchaseSqft(this)">
@@ -1813,46 +2137,85 @@ if ($current_tab === 'other') {
                         <label class="text-xs uppercase font-black text-slate-500 ml-1">Item Name</label>
                         <input type="text" class="p_item_name input-glass h-[52px] text-base" value="${name}" required placeholder="Name">
                     </div>
+                    <div class="w-24 p_pallets_container flex flex-col space-y-2 ${isGlass ? 'hidden' : 'hidden'}">
+                        <label class="text-xs uppercase font-black text-slate-500 ml-1">Pallets</label>
+                        <input type="number" class="p_item_pallets input-glass h-[52px] text-base text-center font-bold" value="${pallets || (isGlass ? 1 : '')}" oninput="calculatePurchaseTotals()" placeholder="0">
+                    </div>
                     <div class="w-28 flex flex-col space-y-2">
-                        <label class="text-xs uppercase font-black text-slate-500 ml-1">Qty (Pcs)</label>
+                        <label class="text-xs uppercase font-black text-slate-500 ml-1 p_qty_label">${isGlass ? 'Sheet Qty' : 'Qty (Pcs)'}</label>
                         <input type="number" class="p_item_qty input-glass h-[52px] text-base text-center font-bold" value="${qty}" required oninput="calculatePurchaseTotals()" placeholder="0">
+                    </div>
+                    <div class="w-28 p_total_sheets_container flex flex-col space-y-2 hidden">
+                        <label class="text-xs uppercase font-black text-indigo-500 ml-1">Total Sheets</label>
+                        <div class="p_disp_total_sheets h-[52px] flex items-center justify-center px-4 bg-white rounded-2xl border-2 border-indigo-100 font-black text-indigo-600 text-base overflow-hidden">0</div>
                     </div>
                     <div class="w-28 p_sqft_container flex flex-col space-y-2 ${isGlass ? '' : 'hidden'}">
                         <label class="text-xs uppercase font-black text-slate-500 ml-1">Sqft</label>
                         <input type="number" step="0.001" class="p_item_sqft input-glass h-[52px] text-base text-center font-bold" value="${sqft}" oninput="calculatePurchaseTotals()" placeholder="0.00">
                     </div>
-                    <div class="w-40 flex flex-col space-y-2">
-                        <label class="text-xs uppercase font-black text-slate-500 ml-1">Price/Unit</label>
-                        <input type="number" step="0.01" class="p_item_price input-glass h-[52px] text-lg text-right font-black text-indigo-600" value="${price}" required oninput="calculatePurchaseTotals()" placeholder="0.00">
+                    <div class="w-32 p_total_sqft_container flex flex-col space-y-2 hidden">
+                        <label class="text-xs uppercase font-black text-indigo-500 ml-1">Total Sqfts</label>
+                        <div class="p_disp_total_sqft h-[52px] flex items-center justify-center px-4 bg-white rounded-2xl border-2 border-indigo-100 font-black text-indigo-600 text-base overflow-hidden">${total_sqft}</div>
                     </div>
                     <div class="w-44 p_cost_sqft_container flex flex-col space-y-2 ${isGlass ? '' : 'hidden'}">
-                        <label class="text-xs uppercase font-black text-cyan-600 ml-1">Cost/Sqft</label>
-                        <div class="p_disp_cost_sqft h-[52px] flex items-center justify-end px-4 bg-white rounded-2xl border-2 border-cyan-100 font-black text-cyan-600 text-base whitespace-nowrap overflow-hidden">0.00</div>
+                        <label class="text-xs uppercase font-black text-cyan-600 ml-1">Price / Sqft</label>
+                        <input type="number" step="0.01" class="p_item_price_sqft input-glass h-[52px] text-right font-black text-cyan-600" value="${price_per_sqft}" oninput="calculatePurchaseTotals('sqft', this)" placeholder="0.00">
+                    </div>
+                    <div class="w-40 flex flex-col space-y-2">
+                        <label class="text-xs uppercase font-black text-slate-500 ml-1 p_price_label">${isGlass ? 'Price / Sheet' : 'Price/Unit'}</label>
+                        <input type="number" step="0.01" class="p_item_price input-glass h-[52px] text-lg text-right font-black text-indigo-600" value="${price}" required oninput="calculatePurchaseTotals('sheet', this)" placeholder="0.00" ${isGlass ? 'readonly' : ''}>
                     </div>
                     <div class="w-52 flex flex-col space-y-2">
                         <label class="text-xs uppercase font-black text-indigo-600 ml-1">Line Total</label>
                         <div class="p_disp_line_total h-[52px] flex items-center justify-end px-4 bg-white rounded-2xl border-2 border-indigo-100 font-black text-indigo-600 text-base shadow-sm whitespace-nowrap overflow-hidden">0.00</div>
                     </div>
-                    <button type="button" onclick="document.getElementById('${rowId}').remove(); calculatePurchaseTotals();" class="absolute -right-4 -top-4 bg-rose-500 text-white w-9 h-9 rounded-full text-sm items-center justify-center flex shadow-xl hover:scale-110 active:scale-95 transition-all">
-                        <i class="fa-solid fa-times"></i>
-                    </button>
+                    <div class="flex flex-col justify-end gap-2 pb-1">
+                        ${id ? `
+                            <button type="button" onclick="prepareShopModal(${id}, 'other', this)" 
+                                     class="w-32 h-[52px] bg-indigo-50 text-indigo-600 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all shadow-sm">
+                                <i class="fa-solid fa-store mr-1"></i> Shop
+                            </button>
+                        ` : ''}
+                        <button type="button" onclick="document.getElementById('${rowId}').remove(); calculatePurchaseTotals();" class="w-12 h-[52px] bg-rose-50 text-rose-500 rounded-2xl text-sm flex items-center justify-center border border-rose-100 hover:bg-rose-500 hover:text-white transition-all">
+                            <i class="fa-solid fa-trash-can"></i>
+                        </button>
+                    </div>
                 </div>
             `;
             document.getElementById('p-items-list').insertAdjacentHTML('beforeend', html);
         }
 
         function togglePurchaseSqft(select) {
-            const row = select.closest('.group');
+            const row = select.closest('.p-item-row');
+            const palletsCont = row.querySelector('.p_pallets_container');
+            const totalSheetsCont = row.querySelector('.p_total_sheets_container');
             const sqftCont = row.querySelector('.p_sqft_container');
+            const totalSqftCont = row.querySelector('.p_total_sqft_container');
             const costSqftCont = row.querySelector('.p_cost_sqft_container');
+            const qtyLabel = row.querySelector('.p_qty_label');
+            const priceLabel = row.querySelector('.p_price_label');
             
             if (select.value === 'Glass') {
+                palletsCont.classList.add('hidden');
+                row.querySelector('.p_item_pallets').value = 1;
+                totalSheetsCont.classList.add('hidden');
                 sqftCont.classList.remove('hidden');
+                totalSqftCont.classList.add('hidden');
                 costSqftCont.classList.remove('hidden');
+                qtyLabel.innerText = 'Sheet Qty';
+                priceLabel.innerText = 'Price / Sheet';
+                row.querySelector('.p_item_price').readOnly = true;
             } else {
+                palletsCont.classList.add('hidden');
+                totalSheetsCont.classList.add('hidden');
                 sqftCont.classList.add('hidden');
+                totalSqftCont.classList.add('hidden');
                 costSqftCont.classList.add('hidden');
+                qtyLabel.innerText = 'Qty (Pcs)';
+                priceLabel.innerText = 'Price/Unit';
+                row.querySelector('.p_item_price').readOnly = false;
                 row.querySelector('.p_item_sqft').value = '';
+                row.querySelector('.p_item_pallets').value = '';
             }
             calculatePurchaseTotals();
         }
@@ -1935,21 +2298,47 @@ if ($current_tab === 'other') {
             row.querySelector('.p_pay_extra_fields').classList.toggle('hidden', method !== 'Cheque');
         }
 
-        function calculatePurchaseTotals() {
+        function calculatePurchaseTotals(trigger = '', el = null) {
             let subtotal = 0;
             const items = document.querySelectorAll('#p-items-list .p-item-row');
             items.forEach(row => {
                 const category = row.querySelector('.p_item_category').value;
-                const qty = parseFloat(row.querySelector('.p_item_qty').value) || 0;
-                const sqft = parseFloat(row.querySelector('.p_item_sqft').value) || 0;
-                const price = parseFloat(row.querySelector('.p_item_price').value) || 0;
+                let pallets = parseInt(row.querySelector('.p_item_pallets')?.value) || 0;
+                if (category === 'Glass' && !pallets) pallets = 1; // Default to 1 for glass
 
-                const lineTotal = qty * price;
+                const qtyPerPallet = parseFloat(row.querySelector('.p_item_qty').value) || 0;
+                const sqft = parseFloat(row.querySelector('.p_item_sqft').value) || 0;
+                let priceSheet = parseFloat(row.querySelector('.p_item_price').value) || 0;
+                let priceSqft = parseFloat(row.querySelector('.p_item_price_sqft')?.value) || 0;
+
+                // Circular calculation for Glass
+                if (category === 'Glass') {
+                    if (sqft > 0) {
+                        // Always calculate Sheet Price from Sqft Price for Glass now
+                        priceSheet = sqft * priceSqft;
+                        row.querySelector('.p_item_price').value = priceSheet.toFixed(2);
+                    }
+                }
+
+                const qty = pallets > 0 ? (pallets * qtyPerPallet) : qtyPerPallet;
+                if (category === 'Glass') {
+                    row.querySelector('.p_disp_total_sheets').innerText = qty.toLocaleString();
+                }
+
+                const lineTotal = qty * priceSheet;
                 row.querySelector('.p_disp_line_total').innerText = 'Rs. ' + lineTotal.toLocaleString(undefined, { minimumFractionDigits: 2 });
 
-                if (category === 'Glass' && sqft > 0) {
-                    const costSqft = lineTotal / sqft;
-                    row.querySelector('.p_disp_cost_sqft').innerText = costSqft.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                if (category === 'Glass') {
+                    const totalSqft = qty * sqft;
+                    row.querySelector('.p_disp_total_sqft').innerText = totalSqft.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                    
+                    // Display Price/Sqft for items not currently being edited
+                    if (!(el && row.contains(el) && trigger === 'sqft')) {
+                         if (sqft > 0 && !(el && row.contains(el) && trigger === 'sheet')) {
+                            const calculatedSqftPrice = priceSheet / sqft;
+                            row.querySelector('.p_item_price_sqft').value = calculatedSqftPrice.toFixed(2);
+                         }
+                    }
                 }
 
                 subtotal += lineTotal;
@@ -2013,7 +2402,6 @@ if ($current_tab === 'other') {
                 resBox.className = 'bank-suggestions absolute left-0 top-full mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-xl hidden z-[100] max-h-40 overflow-y-auto';
                 input.parentNode.appendChild(resBox);
             }
-            // Always ensure parent is relative for proper absolute positioning
             input.parentNode.style.position = 'relative';
 
             if (val.length < 1) { resBox.classList.add('hidden'); return; }
@@ -2040,7 +2428,7 @@ if ($current_tab === 'other') {
                         });
                         resBox.classList.remove('hidden');
                     } else {
-                        resBox.innerHTML = `<div class="p-3 text-center bg-slate-50/50"><p class="text-[10px] font-black text-slate-400 uppercase mb-2 italic">Bank not in records</p><button type="button" onclick="openOpCreateBankModal('${val.replace(/'/g, "\\'")}')" class="w-full bg-slate-900 hover:bg-black text-white py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-lg active:scale-95">Add New Bank</button></div>`;
+                        resBox.innerHTML = `<div class="p-3 text-center bg-slate-50/50"><p class="text-[10px] font-black text-slate-400 uppercase mb-2 italic">Bank not in records</p></div>`;
                         resBox.classList.remove('hidden');
                     }
                 });
@@ -2062,9 +2450,13 @@ if ($current_tab === 'other') {
                 p_items.push({
                     category: row.querySelector('.p_item_category').value,
                     name: row.querySelector('.p_item_name').value,
-                    qty: row.querySelector('.p_item_qty').value,
+                    pallets: row.querySelector('.p_item_pallets')?.value || 0,
+                    qty_per_pallet: row.querySelector('.p_item_qty').value,
+                    qty: row.querySelector('.p_item_qty').value, // This will be used if pallets=0
                     sqft: row.querySelector('.p_item_sqft').value,
-                    price: row.querySelector('.p_item_price').value
+                    price: row.querySelector('.p_item_price').value,
+                    price_per_sqft: row.querySelector('.p_item_price_sqft')?.value || 0,
+                    total_sqft: row.querySelector('.p_disp_total_sqft')?.innerText.replace(/,/g, '') || 0
                 });
             });
             formData.append('items', JSON.stringify(p_items));
@@ -2118,7 +2510,9 @@ if ($current_tab === 'other') {
                         document.getElementById('p_discount').value = d.discount;
 
                         document.getElementById('p-items-list').innerHTML = '';
-                        d.items.forEach(it => addPurchaseItemRow(it.item_name, it.qty, it.square_feet, it.price_per_item, it.category));
+                        d.items.forEach(it => {
+                            addPurchaseItemRow(it.item_name, it.qty_per_pallet || it.qty, it.square_feet, it.price_per_item, it.category, it.price_per_sqft, it.total_sqft, it.id, it.pallets);
+                        });
 
                         pExpensesList.innerHTML = '';
                         d.expenses.forEach(ex => addPurchaseExpenseRow(ex.expense_name, ex.amount));
@@ -2152,7 +2546,236 @@ if ($current_tab === 'other') {
                     });
             }
         }
+        // --- Shop Management Logic ---
+        const shopModal = document.getElementById('shop-modal');
+        const shopHistoryList = document.getElementById('shop-history-list');
+        const addShopForm = document.getElementById('add-shop-form');
+        let currentShopItems = [];
+        let currentShopSource = '';
+
+        function prepareShopModal(id, source, btn_or_data, all_items = null) {
+            const row = (btn_or_data instanceof HTMLElement) ? (btn_or_data.closest('tr') || btn_or_data.closest('.grid') || btn_or_data.closest('.p-item-row') || btn_or_data.closest('.shop-select-item')) : null;
+            let itemId = id;
+            let itemData = (btn_or_data && !(btn_or_data instanceof HTMLElement)) ? btn_or_data : null;
+            
+            // Get metadata from row or fetch
+            let brand, category, sqftPerSheet, costSqft;
+            
+            if (itemData) {
+                brand = itemData.item_name;
+                category = source === 'container' ? 'Glass' : (itemData.category || 'Other');
+                sqftPerSheet = itemData.square_feet;
+                costSqft = itemData.price_per_sqft || 0;
+            } else if (source === 'container') {
+                const brandInput = row.querySelector('.brand-input');
+                if (brandInput) {
+                    brand = brandInput.value;
+                    category = 'Glass'; 
+                    sqftPerSheet = row.querySelector('.sqft-input').value;
+                    costSqft = document.getElementById('disp-per-item-cost')?.innerText.replace(/[^\d.]/g, '') || 0;
+                } else if (row.classList.contains('shop-select-item')) {
+                    brand = row.querySelector('.item-brand-name').innerText;
+                    category = 'Glass';
+                    sqftPerSheet = parseFloat(row.querySelector('.item-sqft').innerText) || 0;
+                    costSqft = row.dataset.costSqft || 0;
+                } else {
+                    brand = row.cells[0]?.innerText || 'Unknown';
+                    category = 'Glass';
+                    sqftPerSheet = parseFloat(row.cells[3]?.innerText) || 0;
+                    costSqft = parseFloat(row.cells[6]?.innerText.replace(/[^\d.]/g, '')) || 0;
+                }
+            } else {
+                const catInput = row.querySelector('.p_item_category');
+                if (catInput) {
+                    category = catInput.value;
+                    brand = row.querySelector('.p_item_name').value;
+                    sqftPerSheet = parseFloat(row.querySelector('.p_item_sqft').value) || 0;
+                    costSqft = row.querySelector('.p_item_price_sqft')?.value || row.querySelector('.p_disp_cost_sqft')?.innerText.replace(/[^\d.]/g, '') || 0;
+                    itemId = row.querySelector('.p_item_id')?.value || id;
+                } else if (row.classList.contains('shop-select-item')) {
+                    brand = row.querySelector('.item-brand-name').innerText;
+                    category = 'Other'; 
+                    sqftPerSheet = parseFloat(row.querySelector('.item-sqft').innerText) || 0;
+                    costSqft = row.dataset.costSqft || 0;
+                } else {
+                    brand = row.cells[2]?.innerText || 'Unknown';
+                    category = row.cells[1]?.innerText || 'Other';
+                    sqftPerSheet = parseFloat(row.cells[4]?.innerText) || 0;
+                    costSqft = parseFloat(row.cells[7]?.innerText.replace(/[^\d.]/g, '')) || 0;
+                }
+            }
+
+            if (!itemId) {
+                alert("Please save the record first before adding to shop.");
+                return;
+            }
+
+            document.getElementById('shop-item-display').innerText = `${brand} | ${category} (${sqftPerSheet} FT²)`;
+            document.getElementById('shop_item_id').value = itemId;
+            document.getElementById('shop_item_source').value = source;
+            document.getElementById('shop_item_category').value = category;
+            document.getElementById('shop_item_brand').value = brand;
+            document.getElementById('shop_item_sqft_per_sheet').value = sqftPerSheet;
+            document.getElementById('shop_item_cost_sqft').value = costSqft;
+            
+            document.getElementById('shop_selling_price').value = costSqft;
+
+            // Update Entry Costs display
+            document.getElementById('shop_entry_cost_sqft').innerText = `Rs. ${parseFloat(costSqft).toFixed(2)}`;
+            document.getElementById('shop_entry_sheet_size').innerText = `${parseFloat(sqftPerSheet).toFixed(2)} SQFT`;
+            
+            // Populate Pallet data if available
+            // calculateShopSheets() is no longer needed as pallets fields were removed
+            // but we can default sheets to move to the total qty available if needed
+            document.getElementById('shop_add_sheets').value = itemData ? (itemData.total_qty - (itemData.sold_qty || 0)) : 0;
+
+            // Handle multiple items switcher
+            const switcher = document.getElementById('shop-item-switcher');
+            if (all_items && all_items.length > 1) {
+                currentShopItems = all_items;
+                currentShopSource = source;
+                switcher.innerHTML = all_items.map((it, idx) => `
+                    <button onclick="prepareShopModal(${it.id}, '${source}', currentShopItems[${idx}], currentShopItems)" 
+                            class="px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${it.id == itemId ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'}">
+                        ${it.item_name}
+                    </button>
+                `).join('');
+                switcher.classList.remove('hidden');
+            } else if (!all_items) {
+                switcher.classList.add('hidden');
+            }
+            
+            
+            fetch(`?action=get_shop_details&item_id=${itemId}&source=${source}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        const s = data.shop;
+                        document.getElementById('shop-disp-sheets').innerText = s ? s.full_sheets_qty : '0';
+                        document.getElementById('shop-disp-total-sqft').innerText = s ? (s.full_sheets_qty * s.sqft_per_sheet).toFixed(2) : '0.00';
+                        document.getElementById('shop-disp-price').innerText = s ? ('Rs. ' + parseFloat(s.selling_price_per_sqft).toLocaleString()) : ('Rs. ' + parseFloat(costSqft).toLocaleString());
+                        
+                        if (s) document.getElementById('shop_selling_price').value = s.selling_price_per_sqft;
+
+                        shopHistoryList.innerHTML = data.history.map(h => {
+                            const tSqft = h.sheets_added * sqftPerSheet;
+                            const potential = tSqft * h.selling_price_per_sqft;
+                            return `
+                                <tr class="text-[11px] text-slate-600 border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                                    <td class="py-4 px-6 font-bold text-slate-400">${new Date(h.added_at).toLocaleDateString()}</td>
+                                    <td class="py-4 px-6 font-black text-indigo-600">${h.sheets_added} Sheets</td>
+                                    <td class="py-4 px-6 font-bold">Rs. ${parseFloat(h.cost_price_per_sqft).toLocaleString()}</td>
+                                    <td class="py-4 px-6 font-black text-emerald-600">Rs. ${parseFloat(h.selling_price_per_sqft).toLocaleString()}</td>
+                                    <td class="py-4 px-6 font-bold text-slate-500">${tSqft.toFixed(2)} FT²</td>
+                                    <td class="py-4 px-6 text-right font-black text-slate-900">Rs. ${potential.toLocaleString()}</td>
+                                </tr>
+                            `;
+                        }).join('');
+                        
+                        if (data.history.length === 0) {
+                            shopHistoryList.innerHTML = '<tr><td colspan="6" class="py-12 text-center text-slate-400 italic font-bold">No previous stock movements recorded.</td></tr>';
+                        }
+                    }
+                });
+
+            shopModal.classList.remove('hidden');
+            document.getElementById('add-shop-form-container').classList.add('hidden');
+            document.body.classList.add('overflow-hidden');
+        }
+
+        function calculateShopSheets() {
+            const pallets = parseFloat(document.getElementById('shop_add_pallets').value) || 0;
+            const qtyPerPallet = parseFloat(document.getElementById('shop_add_qty_per_pallet').value) || 0;
+            if (pallets > 0 && qtyPerPallet > 0) {
+                document.getElementById('shop_add_sheets').value = Math.round(pallets * qtyPerPallet);
+            }
+        }
+
+        function openAddToShopForm() {
+            document.getElementById('add-shop-form-container').classList.remove('hidden');
+            document.getElementById('shop_add_sheets').focus();
+        }
+
+        function closeShopModal() {
+            shopModal.classList.add('hidden');
+            if (document.getElementById('shop-select-modal').classList.contains('hidden')) {
+                document.body.classList.remove('overflow-hidden');
+            }
+        }
+
+        addShopForm.onsubmit = function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            formData.append('action', 'add_to_shop');
+            formData.append('item_id', document.getElementById('shop_item_id').value);
+            formData.append('source', document.getElementById('shop_item_source').value);
+            formData.append('category', document.getElementById('shop_item_category').value);
+            formData.append('brand_name', document.getElementById('shop_item_brand').value);
+            formData.append('sqft_per_sheet', document.getElementById('shop_item_sqft_per_sheet').value);
+            formData.append('cost_price', document.getElementById('shop_item_cost_sqft').value);
+            formData.append('sheets', document.getElementById('shop_add_sheets').value);
+            formData.append('selling_price', document.getElementById('shop_selling_price').value);
+
+            const btn = this.querySelector('button[type="submit"]');
+            btn.disabled = true;
+            btn.innerText = 'PROCESSING...';
+
+            fetch('', { method: 'POST', body: formData })
+                .then(r => r.json())
+                .then(res => {
+                    btn.disabled = false;
+                    btn.innerText = 'Confirm Stock Transfer';
+                    if (res.success) {
+                        alert("Stock successfully moved to Shop Inventory!");
+                        prepareShopModal(document.getElementById('shop_item_id').value, document.getElementById('shop_item_source').value, document.querySelector(`[onclick*="prepareShopModal(${document.getElementById('shop_item_id').value}"]`));
+                        addShopForm.reset();
+                    } else {
+                        alert(res.message);
+                    }
+                });
+        };
+
+        function openShopSelectModal(id, source) {
+            fetch(`?action=get_items_for_shop&id=${id}&source=${source}`)
+                .then(r => r.json())
+                .then(res => {
+                    if (res.success && res.items.length > 0) {
+                        // Always open the first item's management directly
+                        prepareShopModal(res.items[0].id, source, res.items[0], res.items);
+                    } else {
+                        alert("No saved items found for this record.");
+                    }
+                });
+        }
+
+        function closeShopSelectModal() {
+            document.getElementById('shop-select-modal').classList.add('hidden');
+            if (document.getElementById('shop-modal').classList.contains('hidden')) {
+                document.body.classList.remove('overflow-hidden');
+            }
+        }
     </script>
+
+    <!-- Shop Item Selection Modal -->
+    <div id="shop-select-modal" class="fixed inset-0 bg-black/60 backdrop-blur-md z-[110] hidden flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-2xl rounded-[40px] shadow-2xl p-10 overflow-hidden relative border border-white/20">
+            <div class="flex items-center justify-between mb-8">
+                <div>
+                    <h3 class="text-2xl font-black text-slate-800 tracking-tight">Select Item to Shop</h3>
+                    <p class="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Directly move stock to POS inventory</p>
+                </div>
+                <button onclick="closeShopSelectModal()" class="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-800 transition-all"><i class="fa-solid fa-times"></i></button>
+            </div>
+            
+            <div id="shop-select-list" class="space-y-4 max-h-[60vh] overflow-y-auto pr-2 custom-scroll">
+                <!-- Items populated via JS -->
+            </div>
+            
+            <div class="mt-8 pt-6 border-t border-slate-100 text-center">
+                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Note: Only saved items appear here</p>
+            </div>
+        </div>
+    </div>
 
     <!-- Payment Modals for Other Purchases -->
     <!-- Modal: Add Payment -->
@@ -2538,5 +3161,4 @@ if ($current_tab === 'other') {
         }
     </script>
 </body>
-
 </html>

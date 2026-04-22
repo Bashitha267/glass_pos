@@ -238,10 +238,17 @@ $stmt = $pdo->prepare("SELECT * FROM delivery_expenses WHERE delivery_id = ?");
 $stmt->execute([$id]);
 $expenses = $stmt->fetchAll();
 
-$total_revenue = array_sum(array_column($customers, 'subtotal'));
+$total_revenue = 0;
 $total_discount = 0;
+$total_cogs = 0;
+$total_damage_loss = 0;
 foreach ($customers as $c) {
+    $total_revenue += (float)$c['subtotal'];
     $total_discount += (float)$c['discount'];
+    foreach ($c['items'] as $it) {
+        $total_cogs += (($it['qty'] - $it['damaged_qty']) * $it['square_feet'] * $it['cost_price']);
+        $total_damage_loss += ($it['damaged_qty'] * $it['square_feet'] * $it['cost_price']);
+    }
 }
 $total_paid = 0; foreach($customers as $c) $total_paid += $c['total_paid'];
 $pending_payment = $total_revenue - $total_paid;
@@ -502,9 +509,10 @@ $pending_payment = $total_revenue - $total_paid;
                                 <tr class="text-[10px] uppercase font-black text-slate-600 bg-slate-100/80 rounded-xl overflow-hidden print-pure-black">
                                     <th class="py-3 px-4 rounded-l-xl">Brand / Product</th>
                                     <th class="py-3 px-2">Container</th>
-                                    <th class="py-3 px-2 text-center">Qty</th>
+                                    <th class="py-3 px-2 text-center">Sheets</th>
+                                    <th class="py-3 px-2 text-center">Sqft</th>
                                     <th class="py-3 px-2 text-center text-rose-600">Dmg</th>
-                                    <th class="py-3 px-2 text-right">Unit Price</th>
+                                    <th class="py-3 px-2 text-right">Price / Sqft</th>
                                     <th class="py-3 px-4 text-right rounded-r-xl">Line Total</th>
                                 </tr>
                             </thead>
@@ -514,6 +522,7 @@ $pending_payment = $total_revenue - $total_paid;
                                     <td class="py-4 px-4 font-black text-slate-800 rounded-l-xl border-l border-y border-transparent group-hover:border-indigo-100"><?php echo $item['brand_name']; ?></td>
                                     <td class="py-4 px-2 font-bold text-slate-500 text-[10px] border-y border-transparent group-hover:border-indigo-100"><?php echo $item['container_number']; ?></td>
                                     <td class="py-4 px-2 text-center font-black border-y border-transparent group-hover:border-indigo-100"><?php echo $item['qty']; ?></td>
+                                    <td class="py-4 px-2 text-center font-bold text-indigo-600 border-y border-transparent group-hover:border-indigo-100"><?php echo number_format($item['square_feet'], 3); ?></td>
                                     <td class="py-4 px-2 text-center border-y border-transparent group-hover:border-indigo-100">
                                         <input type="number" value="<?php echo $item['damaged_qty']; ?>" class="w-12 h-8 text-center bg-transparent border-0 font-bold focus:ring-0" onchange="updateDamage(<?php echo $item['id']; ?>, this.value)">
                                     </td>
@@ -678,13 +687,20 @@ $pending_payment = $total_revenue - $total_paid;
                 <h3 class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6 print-label">Trip Net Analysis</h3>
                 <div class="space-y-6">
                     <div class="flex justify-between items-center group">
-                        <span class="text-xs font-black text-slate-400 group-hover:text-white transition-colors">Total Revenue</span>
+                        <span class="text-xs font-black text-slate-400 group-hover:text-white transition-colors">Gross Revenue</span>
                         <span class="text-md font-black">LKR <?php echo number_format($total_revenue, 2); ?></span>
                     </div>
                     <?php
-                    // Simplified profit for details page
-                    $net_estimated = $total_revenue - $delivery['total_expenses'];
+                    $net_estimated = $total_revenue - $total_cogs - $total_damage_loss - $delivery['total_expenses'];
                     ?>
+                    <div class="flex justify-between items-center group">
+                        <span class="text-xs font-black text-slate-400 group-hover:text-white transition-colors">Cost of Goods (Sold)</span>
+                        <span class="text-md font-black text-amber-400">LKR <?php echo number_format($total_cogs, 2); ?></span>
+                    </div>
+                    <div class="flex justify-between items-center group">
+                        <span class="text-xs font-black text-slate-400 group-hover:text-white transition-colors">Damage Loss (Cost)</span>
+                        <span class="text-md font-black text-rose-400">LKR <?php echo number_format($total_damage_loss, 2); ?></span>
+                    </div>
                     <div class="flex justify-between items-center group">
                         <span class="text-xs font-black text-slate-400 group-hover:text-white transition-colors">Total Expenses</span>
                         <span class="text-md font-black text-rose-400">LKR <?php echo number_format($delivery['total_expenses'], 2); ?></span>
@@ -692,8 +708,8 @@ $pending_payment = $total_revenue - $total_paid;
                     <div class="h-px bg-slate-800 w-full"></div>
                     <div class="flex justify-between items-center">
                         <div>
-                            <span class="text-[10px] font-black text-emerald-400 uppercase tracking-widest block mb-1">Estimated Net Profit from Delivery</span>
-                            <span class="text-2xl font-black font-['Outfit'] text-white">LKR <?php echo number_format($net_estimated, 2); ?></span>
+                            <span class="text-[10px] font-black text-emerald-400 uppercase tracking-widest block mb-1">Estimated Net Profit</span>
+                            <span class="text-2xl font-black font-['Outfit'] <?php echo $net_estimated >= 0 ? 'text-white' : 'text-rose-500'; ?>">LKR <?php echo number_format($net_estimated, 2); ?></span>
                         </div>
                         <div class="w-12 h-12 bg-emerald-500/20 rounded-2xl flex items-center justify-center text-emerald-400">
                             <i class="fa-solid fa-chart-line text-xl"></i>
