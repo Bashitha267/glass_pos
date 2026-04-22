@@ -191,12 +191,15 @@ if ($action === 'save_pos_sale') {
                         if ($shop['partial_sqft_qty'] < $totalSqft) throw new Exception("Insufficient partial leftovers for " . $it['brand_name']);
                         $pdo->prepare("UPDATE shop_inventory SET partial_sqft_qty = partial_sqft_qty - ? WHERE id = ?")->execute([$totalSqft, $shop['id']]);
                     } else {
-                        // Deduct from Full Sheets
-                        $sheets_to_break = ceil($totalSqft / $shop['sqft_per_sheet']);
+                        // Deduct from Full Sheets: Break one fresh sheet per quantity requested
+                        $sheets_to_break = $qty; 
                         if ($shop['full_sheets_qty'] < $sheets_to_break) throw new Exception("Insufficient stock to break {$sheets_to_break} full sheets for " . $it['brand_name']);
-                        $leftover = max(0, ($sheets_to_break * $shop['sqft_per_sheet']) - $totalSqft);
+                        
+                        // Leftover = (Fresh Sheets * Sqft/Sheet) - Used Sqft
+                        $leftover_sqft = ($sheets_to_break * $shop['sqft_per_sheet']) - $totalSqft;
+                        
                         $pdo->prepare("UPDATE shop_inventory SET full_sheets_qty = full_sheets_qty - ?, partial_sqft_qty = partial_sqft_qty + ? WHERE id = ?")
-                            ->execute([$sheets_to_break, $leftover, $shop['id']]);
+                            ->execute([$sheets_to_break, $leftover_sqft, $shop['id']]);
                     }
                 }
             }
