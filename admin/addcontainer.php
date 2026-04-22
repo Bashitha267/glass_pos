@@ -95,6 +95,53 @@ if ($action == 'add_to_shop') {
     exit;
 }
 
+if ($action == 'delete_shop_movement') {
+    $historyId = $_POST['history_id'];
+    
+    try {
+        $pdo->beginTransaction();
+        
+        // 1. Get history record
+        $stmt = $pdo->prepare("SELECT * FROM shop_inventory_history WHERE id = ?");
+        $stmt->execute([$historyId]);
+        $history = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$history) throw new Exception("History record not found.");
+        
+        // 2. Get shop inventory record
+        $stmt = $pdo->prepare("SELECT * FROM shop_inventory WHERE id = ?");
+        $stmt->execute([$history['shop_inventory_id']]);
+        $shop = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$shop) throw new Exception("Shop inventory record not found.");
+        
+        $sheets = (int)$history['sheets_added'];
+        
+        // 3. Update shop inventory (subtract sheets)
+        $pdo->prepare("UPDATE shop_inventory SET full_sheets_qty = full_sheets_qty - ?, total_sheets_added = total_sheets_added - ?, updated_at = NOW() WHERE id = ?")
+            ->execute([$sheets, $sheets, $shop['id']]);
+            
+        // 4. Return stock to source
+        if ($shop['item_source'] == 'container') {
+            $pdo->prepare("UPDATE container_items SET sold_qty = sold_qty - ? WHERE id = ?")
+                ->execute([$sheets, $shop['item_id']]);
+        } else {
+            $pdo->prepare("UPDATE other_purchase_items SET sold_qty = sold_qty - ? WHERE id = ?")
+                ->execute([$sheets, $shop['item_id']]);
+        }
+        
+        // 5. Delete history record
+        $pdo->prepare("DELETE FROM shop_inventory_history WHERE id = ?")->execute([$historyId]);
+        
+        $pdo->commit();
+        echo json_encode(['success' => true]);
+    } catch (Exception $e) {
+        $pdo->rollBack();
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    }
+    exit;
+}
+
 if ($action == 'get_items_for_shop') {
     $id = $_GET['id'];
     $source = $_GET['source'];
@@ -1008,7 +1055,7 @@ if ($current_tab === 'other') {
                                                     Shop
                                                 </button>
                                             <?php endif; ?>
-                                            <button onclick="editOtherPurchase(<?php echo $r['id']; ?>)"
+                                            <button onclick="editPurchase(<?php echo $r['id']; ?>)"
                                                 class="bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-indigo-900 transition-all shadow-sm shadow-indigo-200">
                                                 Update
                                             </button>
@@ -1553,6 +1600,7 @@ if ($current_tab === 'other') {
                                         <th class="py-4 px-6">Selling/SQFT</th>
                                         <th class="py-4 px-6">Area Total</th>
                                         <th class="py-4 px-6 text-right">Potential</th>
+                                        <th class="py-4 px-6 text-right">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody id="shop-history-list" class="divide-y divide-slate-50">
@@ -2677,19 +2725,24 @@ if ($current_tab === 'other') {
                             const tSqft = h.sheets_added * sqftPerSheet;
                             const potential = tSqft * h.selling_price_per_sqft;
                             return `
-                                <tr class="text-[11px] text-slate-600 border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                                <tr class="text-[11px] text-slate-600 border-b border-slate-50 hover:bg-slate-50/50 transition-colors group">
                                     <td class="py-4 px-6 font-bold text-slate-400">${new Date(h.added_at).toLocaleDateString()}</td>
                                     <td class="py-4 px-6 font-black text-indigo-600">${h.sheets_added} Sheets</td>
                                     <td class="py-4 px-6 font-bold">Rs. ${parseFloat(h.cost_price_per_sqft).toLocaleString()}</td>
                                     <td class="py-4 px-6 font-black text-emerald-600">Rs. ${parseFloat(h.selling_price_per_sqft).toLocaleString()}</td>
                                     <td class="py-4 px-6 font-bold text-slate-500">${tSqft.toFixed(2)} FT²</td>
                                     <td class="py-4 px-6 text-right font-black text-slate-900">Rs. ${potential.toLocaleString()}</td>
+                                    <td class="py-4 px-6 text-right">
+                                        <button onclick="deleteShopMovement(${h.id})" class="w-7 h-7 rounded-lg bg-rose-50 text-rose-500 hover:bg-rose-500 hover:text-white flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 ml-auto">
+                                            <i class="fa-solid fa-trash-can text-[10px]"></i>
+                                        </button>
+                                    </td>
                                 </tr>
                             `;
                         }).join('');
                         
                         if (data.history.length === 0) {
-                            shopHistoryList.innerHTML = '<tr><td colspan="6" class="py-12 text-center text-slate-400 italic font-bold">No previous stock movements recorded.</td></tr>';
+                            shopHistoryList.innerHTML = '<tr><td colspan="7" class="py-12 text-center text-slate-400 italic font-bold">No previous stock movements recorded.</td></tr>';
                         }
                     }
                 });
@@ -2717,6 +2770,27 @@ if ($current_tab === 'other') {
             if (document.getElementById('shop-select-modal').classList.contains('hidden')) {
                 document.body.classList.remove('overflow-hidden');
             }
+        }
+
+        function deleteShopMovement(historyId) {
+            if (!confirm("Are you sure you want to revert this stock movement? This will return the stock to the registry.")) return;
+
+            const formData = new FormData();
+            formData.append('action', 'delete_shop_movement');
+            formData.append('history_id', historyId);
+
+            fetch('?', {
+                method: 'POST',
+                body: formData
+            })
+            .then(r => r.json())
+            .then(res => {
+                if (res.success) {
+                    location.reload();
+                } else {
+                    alert(res.message);
+                }
+            });
         }
 
         addShopForm.onsubmit = function(e) {
