@@ -30,8 +30,20 @@ if ($action == 'get_shop_details') {
         $stmt->execute([$shop['id']]);
         $history = $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
+
+    // Get latest main stock info
+    $mainStock = 0;
+    if ($source == 'container') {
+        $stmt = $pdo->prepare("SELECT (total_qty - sold_qty) as remaining FROM container_items WHERE id = ?");
+        $stmt->execute([$itemId]);
+        $mainStock = $stmt->fetchColumn() ?: 0;
+    } else {
+        $stmt = $pdo->prepare("SELECT (qty - sold_qty) as remaining FROM other_purchase_items WHERE id = ?");
+        $stmt->execute([$itemId]);
+        $mainStock = $stmt->fetchColumn() ?: 0;
+    }
     
-    echo json_encode(['success' => true, 'shop' => $shop, 'history' => $history]);
+    echo json_encode(['success' => true, 'shop' => $shop, 'history' => $history, 'main_stock' => $mainStock]);
     exit;
 }
 
@@ -993,7 +1005,7 @@ if ($current_tab === 'other') {
                                         <div class="flex items-center justify-center gap-2">
                                             <?php if ($r['glass_count'] > 0): ?>
                                                 <button onclick="openShopSelectModal(<?php echo $r['id']; ?>, 'other')"
-                                                    class="bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-indigo-600 hover:text-white transition-all">
+                                                    class="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-emerald-800 transition-all shadow-sm shadow-emerald-200">
                                                     Shop
                                                 </button>
                                             <?php endif; ?>
@@ -1084,7 +1096,7 @@ if ($current_tab === 'other') {
                                     <td class="px-3 py-4 text-center">
                                         <div class="flex items-center justify-center gap-2">
                                             <button onclick="openShopSelectModal(<?php echo $r['id']; ?>, 'container')"
-                                                class="bg-cyan-50 text-cyan-700 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-cyan-600 hover:text-white transition-all shadow-lg shadow-cyan-600/5">
+                                                class="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-emerald-800 transition-all shadow-sm shadow-emerald-200">
                                                 Shop
                                             </button>
                                             <button onclick="editContainer('<?php echo $r['container_number']; ?>')"
@@ -2665,6 +2677,9 @@ if ($current_tab === 'other') {
                         
                         if (s) document.getElementById('shop_selling_price').value = s.selling_price_per_sqft;
 
+                        // Update the "Available to Move" input with latest server data
+                        document.getElementById('shop_add_sheets').value = data.main_stock;
+
                         shopHistoryList.innerHTML = data.history.map(h => {
                             const tSqft = h.sheets_added * sqftPerSheet;
                             const potential = tSqft * h.selling_price_per_sqft;
@@ -2734,17 +2749,7 @@ if ($current_tab === 'other') {
                     btn.disabled = false;
                     btn.innerText = 'Confirm Stock Transfer';
                     if (res.success) {
-                        // Refresh the background registry table
-                        if (typeof handleAjaxSearch === 'function') handleAjaxSearch();
-                        
-                        // Hide the transfer form and refresh the history
-                        document.getElementById('add-shop-form-container').classList.add('hidden');
-                        prepareShopModal(
-                            document.getElementById('shop_item_id').value, 
-                            document.getElementById('shop_item_source').value, 
-                            document.querySelector(`[onclick*="prepareShopModal(${document.getElementById('shop_item_id').value}"]`)
-                        );
-                        addShopForm.reset();
+                        location.reload();
                     } else {
                         alert(res.message);
                     }
