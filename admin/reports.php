@@ -658,6 +658,14 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
                 <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Overhead Expenses (Bills)</p>
                 <h2 class="text-3xl font-black text-fuchsia-600 tracking-tighter">LKR <?php echo number_format($total_overhead_expenses, 2); ?></h2>
             </div>
+
+            <div class="glass-card p-8 bg-gradient-to-br from-emerald-400/10 to-transparent border-emerald-200">
+                <div class="stat-icon bg-emerald-100 text-emerald-600 mb-4">
+                    <i class="fa-solid fa-hand-holding-medical text-2xl"></i>
+                </div>
+                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Other Income</p>
+                <h2 class="text-3xl font-black text-emerald-600 tracking-tighter">LKR <?php echo number_format($total_other_incomes, 2); ?></h2>
+            </div>
             
             <!-- POS Sales Reports Heading -->
             <div class="col-span-full mt-4 mb-2">
