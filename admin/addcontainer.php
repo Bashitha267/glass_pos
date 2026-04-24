@@ -60,6 +60,24 @@ if ($action == 'add_to_shop') {
     try {
         $pdo->beginTransaction();
         
+        // 0. Validation: Check available main stock
+        if ($sheets <= 0) throw new Exception("Quantity must be greater than zero.");
+        
+        $mainStock = 0;
+        if ($source == 'container') {
+            $stmt = $pdo->prepare("SELECT (total_qty - sold_qty) as remaining FROM container_items WHERE id = ?");
+            $stmt->execute([$itemId]);
+            $mainStock = $stmt->fetchColumn() ?: 0;
+        } else {
+            $stmt = $pdo->prepare("SELECT (qty - sold_qty) as remaining FROM other_purchase_items WHERE id = ?");
+            $stmt->execute([$itemId]);
+            $mainStock = $stmt->fetchColumn() ?: 0;
+        }
+        
+        if ($sheets > $mainStock) {
+            throw new Exception("Insufficient stock in main inventory. Available: $mainStock");
+        }
+        
         // 1. Check if exists
         $stmt = $pdo->prepare("SELECT id FROM shop_inventory WHERE item_id = ? AND item_source = ?");
         $stmt->execute([$itemId, $source]);
@@ -116,6 +134,11 @@ if ($action == 'delete_shop_movement') {
         if (!$shop) throw new Exception("Shop inventory record not found.");
         
         $sheets = (int)$history['sheets_added'];
+        
+        // 2.5 Validation: Ensure shop stock doesn't go negative
+        if ($shop['full_sheets_qty'] < $sheets) {
+            throw new Exception("Cannot revert movement: Shop inventory has already sold some of these items. Current shop stock: " . $shop['full_sheets_qty']);
+        }
         
         // 3. Update shop inventory (subtract sheets)
         $pdo->prepare("UPDATE shop_inventory SET full_sheets_qty = full_sheets_qty - ?, total_sheets_added = total_sheets_added - ?, updated_at = NOW() WHERE id = ?")
@@ -321,6 +344,11 @@ if ($action == 'save_purchase') {
         $purchase_id = $stmt->fetchColumn();
 
         // Items
+        // Fetch existing sold_qty to preserve them
+        $stmt = $pdo->prepare("SELECT item_name, sold_qty FROM other_purchase_items WHERE purchase_id = ?");
+        $stmt->execute([$purchase_id]);
+        $oldSold = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
+
         // First delete existing shop entries for non-glass items of this purchase to avoid duplicates on update
         $pdo->prepare("DELETE FROM shop_inventory WHERE item_source = 'other' AND item_id IN (SELECT id FROM other_purchase_items WHERE purchase_id = ? AND category != 'Glass')")->execute([$purchase_id]);
         
@@ -337,8 +365,13 @@ if ($action == 'save_purchase') {
             $lineTotal = $qty * $price;
             if (empty($it['name']) || $qty <= 0)
                 continue;
+            $sold = $oldSold[$it['name']] ?? ($category !== 'Glass' ? $qty : 0);
+            if ($qty < $sold) {
+                throw new Exception("New quantity for " . $it['name'] . " ($qty) cannot be less than already transferred quantity ($sold).");
+            }
+
             $pdo->prepare("INSERT INTO other_purchase_items (purchase_id, item_name, category, pallets, qty_per_pallet, qty, square_feet, price_per_item, price_per_sqft, total_sqft, line_total, sold_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-                ->execute([$purchase_id, $it['name'], $category, $pallets, $qty_per_pallet, $qty, $sqft, $price, $price_sqft, $total_sqft, $lineTotal, ($category !== 'Glass' ? $qty : 0)]);
+                ->execute([$purchase_id, $it['name'], $category, $pallets, $qty_per_pallet, $qty, $sqft, $price, $price_sqft, $total_sqft, $lineTotal, $sold]);
             
             // Auto-push to shop if not Glass
             if ($category !== 'Glass') {
@@ -522,6 +555,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         }
 
         // 3. Handle Items & Brands
+        // Fetch existing sold_qty to preserve them
+        $oldSold = [];
+        if ($old_container) {
+            $stmt = $pdo->prepare("SELECT brand_id, sold_qty FROM container_items WHERE container_id = ?");
+            $stmt->execute([$old_container['id']]);
+            $oldSold = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
+        }
+
         // Clear existing items for this container if updating
         $pdo->prepare("DELETE FROM container_items WHERE container_id = ?")->execute([$container_id]);
 
@@ -547,8 +588,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
             $line_total = $pallets * $qty_per_pallet;
             $line_total_sqft = $line_total * $square_feet;
 
-            $stmt = $pdo->prepare("INSERT INTO container_items (container_id, brand_id, pallets, qty_per_pallet, square_feet, total_qty, total_sqft) VALUES (?, ?, ?, ?, ?, ?, ?)");
-            $stmt->execute([$container_id, $brand_id, $pallets, $qty_per_pallet, $square_feet, $line_total, $line_total_sqft]);
+            $sold = $oldSold[$brand_id] ?? 0;
+            if ($line_total < $sold) {
+                throw new Exception("New quantity for $brand_name ($line_total) cannot be less than already transferred quantity ($sold).");
+            }
+
+            $stmt = $pdo->prepare("INSERT INTO container_items (container_id, brand_id, pallets, qty_per_pallet, square_feet, total_qty, total_sqft, sold_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$container_id, $brand_id, $pallets, $qty_per_pallet, $square_feet, $line_total, $line_total_sqft, $sold]);
         }
 
         // 4. Handle Expenses
@@ -2720,6 +2766,7 @@ if ($current_tab === 'other') {
 
                         // Update the "Available to Move" input with latest server data
                         document.getElementById('shop_add_sheets').value = data.main_stock;
+                        addShopForm.dataset.available = data.main_stock;
 
                         shopHistoryList.innerHTML = data.history.map(h => {
                             const tSqft = h.sheets_added * sqftPerSheet;
@@ -2793,8 +2840,20 @@ if ($current_tab === 'other') {
             });
         }
 
-        addShopForm.onsubmit = function(e) {
+        addShopForm.onsubmit = function (e) {
             e.preventDefault();
+            const sheets = parseInt(document.getElementById('shop_add_sheets').value) || 0;
+            const available = parseFloat(this.dataset.available) || 0;
+
+            if (sheets <= 0) {
+                alert("Please enter a quantity greater than zero.");
+                return;
+            }
+            if (sheets > available) {
+                alert(`Insufficient stock. Only ${available} available in main inventory.`);
+                return;
+            }
+
             const formData = new FormData(this);
             formData.append('action', 'add_to_shop');
             formData.append('item_id', document.getElementById('shop_item_id').value);
@@ -2803,7 +2862,7 @@ if ($current_tab === 'other') {
             formData.append('brand_name', document.getElementById('shop_item_brand').value);
             formData.append('sqft_per_sheet', document.getElementById('shop_item_sqft_per_sheet').value);
             formData.append('cost_price', document.getElementById('shop_item_cost_sqft').value);
-            formData.append('sheets', document.getElementById('shop_add_sheets').value);
+            formData.append('sheets', sheets);
             formData.append('selling_price', document.getElementById('shop_selling_price').value);
 
             const btn = this.querySelector('button[type="submit"]');
