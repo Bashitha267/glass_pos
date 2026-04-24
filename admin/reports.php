@@ -782,8 +782,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
                         <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-1">Most Sold Brand Items (By Volume)</p>
                     </div>
                 </div>
-                <div class="relative flex justify-center mb-8">
-                    <canvas id="itemsChart" style="max-height: 250px; max-width: 250px;"></canvas>
+                <div class="relative h-[300px] flex justify-center mb-8">
+                    <canvas id="itemsChart"></canvas>
                 </div>
                 <div class="space-y-3">
                     <?php foreach($items_data as $i): ?>
@@ -803,8 +803,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
                         <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-1">Transaction Methods Breakdown</p>
                     </div>
                 </div>
-                <div class="relative flex justify-center mb-8">
-                    <canvas id="paymentsChart" style="max-height: 250px; max-width: 250px;"></canvas>
+                <div class="relative h-[300px] flex justify-center mb-8">
+                    <canvas id="paymentsChart"></canvas>
                 </div>
                 <div class="space-y-3 mt-4">
                     <?php foreach($pay_types_data as $pt): ?>
@@ -833,8 +833,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
                         <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-1">Most Profitable Brands (Line Item Profit)</p>
                     </div>
                 </div>
-                <div class="relative flex justify-center mb-8">
-                    <canvas id="posItemsChart" style="max-height: 250px; max-width: 250px;"></canvas>
+                <div class="relative h-[300px] flex justify-center mb-8">
+                    <canvas id="posItemsChart"></canvas>
                 </div>
                 <div class="space-y-3">
                     <?php foreach($pos_items_data as $i): ?>
@@ -855,8 +855,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
                         <p class="text-[10px] uppercase font-black text-slate-400 tracking-widest mt-1">Payment Breakdown for POS Sales</p>
                     </div>
                 </div>
-                <div class="relative flex justify-center mb-8">
-                    <canvas id="posPayChart" style="max-height: 250px; max-width: 250px;"></canvas>
+                <div class="relative h-[300px] flex justify-center mb-8">
+                    <canvas id="posPayChart"></canvas>
                 </div>
                 <div class="space-y-3 mt-4">
                     <?php foreach($pos_pay_types as $pt): ?>
@@ -872,132 +872,137 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
     </main>
 
     <script>
-        // Pie Chart Initialization (Items)
-        const ctxItems = document.getElementById('itemsChart');
-        const itemsData = <?php echo json_encode($items_data); ?>;
-        const labelsItems = itemsData.map(i => i.brand_name);
-        const valuesItems = itemsData.map(i => i.total_qty);
-
-        new Chart(ctxItems, {
-            type: 'doughnut',
-            data: {
-                labels: labelsItems,
-                datasets: [{
-                    data: valuesItems,
-                    backgroundColor: [
-                        '#6366f1', '#10b981', '#f59e0b', '#ef4444', 
-                        '#06b6d4', '#8b5cf6', '#ec4899', '#14b8a6', 
-                        '#f43f5e', '#2dd4bf'
-                    ],
-                    borderWidth: 0,
-                    hoverOffset: 20
-                }]
+        // Shared Chart.js Options
+        const sharedOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    padding: 15,
+                    titleFont: { size: 13, weight: 'bold' },
+                    bodyFont: { size: 12 },
+                    backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                    cornerRadius: 12,
+                    displayColors: true
+                }
             },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        padding: 15,
-                        titleFont: { size: 13, weight: 'bold' },
-                        bodyFont: { size: 12 },
-                        backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                        cornerRadius: 12,
-                        displayColors: true
-                    }
+            cutout: '75%'
+        };
+
+        // Pie Chart Initialization (Items)
+        const itemsData = <?php echo json_encode($items_data); ?>;
+        if (itemsData && itemsData.length > 0) {
+            new Chart(document.getElementById('itemsChart').getContext('2d'), {
+                type: 'doughnut',
+                data: {
+                    labels: itemsData.map(i => i.brand_name),
+                    datasets: [{
+                        data: itemsData.map(i => i.total_qty),
+                        backgroundColor: ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#06b6d4', '#8b5cf6', '#ec4899', '#14b8a6', '#f43f5e', '#2dd4bf'],
+                        borderWidth: 0,
+                        hoverOffset: 20
+                    }]
                 },
-                cutout: '75%'
-            }
-        });
+                options: sharedOptions
+            });
+        }
 
         // Pie Chart Initialization (Payments)
-        const ctxPayments = document.getElementById('paymentsChart');
         const paymentsData = <?php echo json_encode($pay_types_data); ?>;
-        const labelsPay = paymentsData.map(i => i.payment_type);
-        const valuesPay = paymentsData.map(i => i.total_amount);
-
-        new Chart(ctxPayments, {
-            type: 'doughnut',
-            data: {
-                labels: labelsPay,
-                datasets: [{
-                    data: valuesPay,
-                    backgroundColor: [
-                        '#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444'
-                    ],
-                    borderWidth: 0,
-                    hoverOffset: 20
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        padding: 15,
-                        titleFont: { size: 13, weight: 'bold' },
-                        bodyFont: { size: 12 },
-                        backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                        cornerRadius: 12,
-                        displayColors: true,
-                        callbacks: {
-                            label: function(context) {
-                                let label = context.label || '';
-                                if (label) { label += ': '; }
-                                if (context.parsed !== null) {
-                                    label += new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR' }).format(context.parsed);
+        if (paymentsData && paymentsData.length > 0) {
+            new Chart(document.getElementById('paymentsChart').getContext('2d'), {
+                type: 'doughnut',
+                data: {
+                    labels: paymentsData.map(i => i.payment_type),
+                    datasets: [{
+                        data: paymentsData.map(i => i.total_amount),
+                        backgroundColor: ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444'],
+                        borderWidth: 0,
+                        hoverOffset: 20
+                    }]
+                },
+                options: {
+                    ...sharedOptions,
+                    plugins: {
+                        ...sharedOptions.plugins,
+                        tooltip: {
+                            ...sharedOptions.plugins.tooltip,
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.label || '';
+                                    if (label) { label += ': '; }
+                                    if (context.parsed !== null) {
+                                        label += new Intl.NumberFormat('en-LK', { style: 'currency', currency: 'LKR' }).format(context.parsed);
+                                    }
+                                    return label;
                                 }
-                                return label;
                             }
                         }
                     }
-                },
-                cutout: '75%'
-            }
-        });
-    </script>
-    <script>
+                }
+            });
+        }
+
         // POS Items Chart
         const posItemsData = <?php echo json_encode($pos_items_data); ?>;
-        if (posItemsData.length > 0) {
-            new Chart(document.getElementById('posItemsChart'), {
+        if (posItemsData && posItemsData.length > 0) {
+            new Chart(document.getElementById('posItemsChart').getContext('2d'), {
                 type: 'doughnut',
                 data: {
                     labels: posItemsData.map(i => i.brand_name),
-                    datasets: [{ data: posItemsData.map(i => i.brand_profit), backgroundColor: ['#7c3aed','#a78bfa','#c4b5fd','#8b5cf6','#6d28d9','#ddd6fe','#4c1d95','#ede9fe','#5b21b6','#764ba2'], borderWidth: 0, hoverOffset: 20 }]
+                    datasets: [{ 
+                        data: posItemsData.map(i => i.brand_profit), 
+                        backgroundColor: ['#7c3aed','#a78bfa','#c4b5fd','#8b5cf6','#6d28d9','#ddd6fe','#4c1d95','#ede9fe','#5b21b6','#764ba2'], 
+                        borderWidth: 0, 
+                        hoverOffset: 20 
+                    }]
                 },
                 options: { 
-                    responsive: true, 
-                    maintainAspectRatio: false, 
+                    ...sharedOptions,
                     plugins: { 
-                        legend: { display: false }, 
+                        ...sharedOptions.plugins,
                         tooltip: { 
-                            padding: 15, 
-                            backgroundColor: 'rgba(15,23,42,0.95)', 
-                            cornerRadius: 12,
+                            ...sharedOptions.plugins.tooltip,
                             callbacks: {
                                 label: function(ctx) {
                                     return ctx.label + ': LKR ' + parseFloat(ctx.parsed).toLocaleString('en-LK', {minimumFractionDigits:2});
                                 }
                             }
                         } 
-                    }, 
-                    cutout: '75%' 
+                    }
                 }
             });
         }
+
         // POS Payment Types Chart
         const posPayData = <?php echo json_encode($pos_pay_types); ?>;
-        if (posPayData.length > 0) {
-            new Chart(document.getElementById('posPayChart'), {
+        if (posPayData && posPayData.length > 0) {
+            new Chart(document.getElementById('posPayChart').getContext('2d'), {
                 type: 'doughnut',
                 data: {
                     labels: posPayData.map(i => i.payment_type),
-                    datasets: [{ data: posPayData.map(i => i.total_amount), backgroundColor: ['#c026d3','#a21caf','#86198f','#6b21a8','#ec4899'], borderWidth: 0, hoverOffset: 20 }]
+                    datasets: [{ 
+                        data: posPayData.map(i => i.total_amount), 
+                        backgroundColor: ['#c026d3','#a21caf','#86198f','#6b21a8','#ec4899'], 
+                        borderWidth: 0, 
+                        hoverOffset: 20 
+                    }]
                 },
-                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { padding: 15, backgroundColor: 'rgba(15,23,42,0.95)', cornerRadius: 12, callbacks: { label: function(ctx) { return ctx.label + ': LKR ' + parseFloat(ctx.parsed).toLocaleString('en-LK', {minimumFractionDigits:2}); } } } }, cutout: '75%' }
+                options: { 
+                    ...sharedOptions,
+                    plugins: { 
+                        ...sharedOptions.plugins,
+                        tooltip: { 
+                            ...sharedOptions.plugins.tooltip,
+                            callbacks: { 
+                                label: function(ctx) { 
+                                    return ctx.label + ': LKR ' + parseFloat(ctx.parsed).toLocaleString('en-LK', {minimumFractionDigits:2}); 
+                                } 
+                            } 
+                        } 
+                    }
+                }
             });
         }
     </script>

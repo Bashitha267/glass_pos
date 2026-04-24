@@ -122,6 +122,8 @@ if ($action === 'save_pos_sale') {
             }
         }
 
+        $status = ($pay_method === 'Later Payment') ? 'pending' : 'completed';
+
         if ($editing_id) {
             // Revert old stock from shop_inventory
             $old = $pdo->prepare("SELECT item_id, item_source, qty, total_sqft, sale_type, category, deduct_from FROM pos_sale_items WHERE sale_id=?");
@@ -159,7 +161,7 @@ if ($action === 'save_pos_sale') {
         } else {
             $bill_id = 'POS-'.date('Ymd').'-'.str_pad(rand(1,9999),4,'0',STR_PAD_LEFT);
             $ins = $pdo->prepare("INSERT INTO pos_sales (bill_id, sale_date, customer_id, manual_customer_name, created_by, payment_method, payment_status) VALUES (?,?,?,?,?,?,?)");
-            $ins->execute([$bill_id, $sale_date, $customer_id, $manual_cust, $user_id, $pay_method, 'pending']);
+            $ins->execute([$bill_id, $sale_date, $customer_id, $manual_cust, $user_id, $pay_method, $status]);
             $sale_id = $pdo->lastInsertId();
         }
 
@@ -234,8 +236,21 @@ if ($action === 'save_pos_sale') {
         $payee_nm = !empty($_POST['payee_name']) ? $_POST['payee_name'] : null;
 
         $manual_cust = $_POST['manual_customer_name'] ?? null;
-        $pdo->prepare("UPDATE pos_sales SET subtotal=?, item_discount=?, bill_discount=?, bill_discount_type=?, grand_total=?, sale_date=?, customer_id=?, manual_customer_name=?, payment_method=?, cheque_number=?, payee_name=?, bank_id=? WHERE id=?")
-            ->execute([$subtotal, $item_disc, $bill_disc_val, $bill_disc_t, $grand_total, $sale_date, $customer_id, $manual_cust, $pay_method, $cheque_no, $payee_nm, $bank_id, $sale_id]);
+        $pdo->prepare("UPDATE pos_sales SET subtotal=?, item_discount=?, bill_discount=?, bill_discount_type=?, grand_total=?, sale_date=?, customer_id=?, manual_customer_name=?, payment_method=?, payment_status=?, cheque_number=?, payee_name=?, bank_id=? WHERE id=?")
+            ->execute([$subtotal, $item_disc, $bill_disc_val, $bill_disc_t, $grand_total, $sale_date, $customer_id, $manual_cust, $pay_method, $status, $cheque_no, $payee_nm, $bank_id, $sale_id]);
+
+        // If completed, record the payment if not already fully paid
+        if ($status === 'completed') {
+            $check_paid = $pdo->prepare("SELECT COALESCE(SUM(amount), 0) FROM pos_sale_payments WHERE sale_id = ?");
+            $check_paid->execute([$sale_id]);
+            $already_paid = $check_paid->fetchColumn();
+            
+            if ($already_paid < $grand_total) {
+                $to_pay = $grand_total - $already_paid;
+                $pdo->prepare("INSERT INTO pos_sale_payments (sale_id, amount, payment_type, bank_id, cheque_number, cheque_payer_name, payment_date, recorded_by) VALUES (?,?,?,?,?,?,?,?)")
+                    ->execute([$sale_id, $to_pay, $pay_method, $bank_id, $cheque_no, $payee_nm, $sale_date, $user_id]);
+            }
+        }
 
         $pdo->commit();
         echo json_encode(['success'=>true,'sale_id'=>$sale_id]);
