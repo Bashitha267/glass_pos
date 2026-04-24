@@ -105,6 +105,23 @@ if ($action === 'save_pos_sale') {
         $bill_disc_t = $_POST['bill_discount_type'] ?? 'fixed';
         $pay_method  = $_POST['payment_method'] ?? 'Later Payment';
 
+        $manual_cust = $_POST['manual_customer_name'] ?? null;
+        $manual_contact = $_POST['customer_contact'] ?? null;
+
+        // Auto-create customer if not registered
+        if (!$customer_id && !empty($manual_contact)) {
+            $check = $pdo->prepare("SELECT id FROM customers WHERE contact_number = ?");
+            $check->execute([$manual_contact]);
+            $existing = $check->fetch();
+            if ($existing) {
+                $customer_id = $existing['id'];
+            } else if (!empty($manual_cust)) {
+                $ins_cust = $pdo->prepare("INSERT INTO customers (name, contact_number) VALUES (?, ?)");
+                $ins_cust->execute([$manual_cust, $manual_contact]);
+                $customer_id = $pdo->lastInsertId();
+            }
+        }
+
         if ($editing_id) {
             // Revert old stock from shop_inventory
             $old = $pdo->prepare("SELECT item_id, item_source, qty, total_sqft, sale_type, category, deduct_from FROM pos_sale_items WHERE sale_id=?");
@@ -141,7 +158,6 @@ if ($action === 'save_pos_sale') {
             $sale_id = $editing_id;
         } else {
             $bill_id = 'POS-'.date('Ymd').'-'.str_pad(rand(1,9999),4,'0',STR_PAD_LEFT);
-            $manual_cust = $_POST['manual_customer_name'] ?? null;
             $ins = $pdo->prepare("INSERT INTO pos_sales (bill_id, sale_date, customer_id, manual_customer_name, created_by, payment_method, payment_status) VALUES (?,?,?,?,?,?,?)");
             $ins->execute([$bill_id, $sale_date, $customer_id, $manual_cust, $user_id, $pay_method, 'pending']);
             $sale_id = $pdo->lastInsertId();
@@ -344,14 +360,24 @@ if ($action === 'delete_pos_sale') {
         </div>
       </div>
     </div>
-    <div class="mb-5">
-      <label class="text-[10px] uppercase font-black text-slate-700 mb-1.5 ml-1 block tracking-widest">Customer</label>
-      <div class="relative max-w-lg">
-        <i class="fa-solid fa-user absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-[10px]"></i>
-        <input type="text" id="cust_search" placeholder="Search customer..." class="input-glass w-full h-[40px] pl-9 text-xs"
-               oninput="searchCustomer(this.value)" autocomplete="off">
-        <input type="hidden" id="selected_customer_id">
-        <div id="cust_results" class="dropdown-results absolute w-full mt-1 border border-slate-200 rounded-xl shadow-2xl z-[100] hidden overflow-hidden"></div>
+    <div class="mb-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <label class="text-[10px] uppercase font-black text-slate-700 mb-1.5 ml-1 block tracking-widest">Contact Number</label>
+        <div class="relative">
+          <i class="fa-solid fa-phone absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-[10px]"></i>
+          <input type="text" id="cust_contact" placeholder="Enter phone number..." class="input-glass w-full h-[40px] pl-9 text-xs"
+                 oninput="searchCustomerByPhone(this.value)" autocomplete="off">
+          <input type="hidden" id="selected_customer_id">
+          <div id="cust_results" class="dropdown-results absolute w-full mt-1 border border-slate-200 rounded-xl shadow-2xl z-[100] hidden overflow-hidden"></div>
+        </div>
+      </div>
+      <div>
+        <label class="text-[10px] uppercase font-black text-slate-700 mb-1.5 ml-1 block tracking-widest">Customer Name</label>
+        <div class="relative">
+          <i class="fa-solid fa-user absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-[10px]"></i>
+          <input type="text" id="cust_search" placeholder="Customer name..." class="input-glass w-full h-[40px] pl-9 text-xs"
+                 oninput="document.getElementById('selected_customer_id').value = ''">
+        </div>
       </div>
     </div>
     <div class="mb-4">
@@ -490,7 +516,10 @@ window.onload = () => {
         document.getElementById('sale_date').value = editData.sale_date;
         if (editData.customer_id) {
             document.getElementById('selected_customer_id').value = editData.customer_id;
-            document.getElementById('cust_search').value = editData.customer_name + ' (' + editData.contact_number + ')';
+            document.getElementById('cust_search').value = editData.customer_name;
+            document.getElementById('cust_contact').value = editData.contact_number;
+        } else if (editData.manual_customer_name) {
+            document.getElementById('cust_search').value = editData.manual_customer_name;
         }
         document.getElementById('bill_disc_val').value = editData.bill_discount;
         document.getElementById('bill_disc_type').value = editData.bill_discount_type;
@@ -522,22 +551,32 @@ window.onload = () => {
 let lastItemResults = [];
 let itemSearchTimeout = null;
 
-function searchCustomer(term) {
+function searchCustomerByPhone(term) {
+  document.getElementById('selected_customer_id').value = '';
   const res = document.getElementById('cust_results');
   if (term.length < 1) { res.classList.add('hidden'); return; }
+  
   fetch(`?action=search_customer&term=${encodeURIComponent(term)}`)
     .then(r=>r.json()).then(data => {
       let html = '';
-      data.forEach(c => {
-        html += `<div onmousedown="selectCustomer(${c.id}, '${c.name.replace(/'/g, "\\'")}')">${c.name}</div>`;
-      });
-      res.innerHTML = html; res.classList.remove('hidden');
+      if (data.length > 0) {
+          data.forEach(c => {
+            html += `<div class="p-3 border-b last:border-0 hover:bg-slate-50 cursor-pointer transition-colors" onmousedown="selectCustomer(${c.id}, '${c.name.replace(/'/g, "\\'")}', '${c.contact_number}')">
+              <div class="font-black text-xs text-slate-800">${c.contact_number}</div>
+              <div class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">${c.name}</div>
+            </div>`;
+          });
+          res.innerHTML = html; res.classList.remove('hidden');
+      } else {
+          res.classList.add('hidden');
+      }
     });
 }
 
-function selectCustomer(id, name) {
+function selectCustomer(id, name, contact) {
   document.getElementById('selected_customer_id').value = id;
   document.getElementById('cust_search').value = name;
+  document.getElementById('cust_contact').value = contact;
   document.getElementById('cust_results').classList.add('hidden');
 }
 
@@ -858,11 +897,12 @@ function confirmAndSaveSale() {
   fd.append('action', 'save_pos_sale');
   if (editData) fd.append('editing_id', editData.id);
   const custId = document.getElementById('selected_customer_id').value;
-  const custManual = document.getElementById('cust_search').value;
+  const custName = document.getElementById('cust_search').value;
+  const custContact = document.getElementById('cust_contact').value;
+  
   fd.append('customer_id', custId);
-  if (!custId && custManual) {
-      fd.append('manual_customer_name', custManual);
-  }
+  if (custName) fd.append('manual_customer_name', custName);
+  if (custContact) fd.append('customer_contact', custContact);
   fd.append('sale_date', document.getElementById('sale_date').value);
   fd.append('items', JSON.stringify(saleItems));
   fd.append('bill_discount', document.getElementById('bill_disc_val').value);
