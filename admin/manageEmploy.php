@@ -131,8 +131,7 @@ $user_list = $users->fetchAll();
         
         body {
             font-family: 'Inter', sans-serif;
-            background: url('../assests/glass_bg.png') no-repeat center center fixed;
-            background-size: cover;
+            background: #fff;
             color: #1e293b;
             min-height: 100vh;
         }

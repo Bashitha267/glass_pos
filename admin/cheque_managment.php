@@ -114,8 +114,7 @@ $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;600;700&display=swap');
         body {
             font-family: 'Inter', sans-serif;
-            background: url('../assests/glass_bg.png') no-repeat center center fixed;
-            background-size: cover;
+            background: #fff;
             color: #0f172a;
             min-height: 100vh;
         }

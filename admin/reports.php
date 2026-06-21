@@ -60,7 +60,7 @@ $total_expenses = (float)$stmtExpenses->fetchColumn();
 $stmtCost = $pdo->prepare("
     SELECT SUM(
         CASE 
-            WHEN di.square_feet > 0 THEN (di.qty - COALESCE(di.damaged_qty,0)) * di.square_feet * di.cost_price 
+            WHEN di.item_source = 'container' THEN (di.qty - COALESCE(di.damaged_qty,0)) * di.square_feet * di.cost_price 
             ELSE (di.qty - COALESCE(di.damaged_qty,0)) * di.cost_price 
         END
     ) 
@@ -287,7 +287,7 @@ $currDelExp = (float)$pdo->query("SELECT COALESCE(SUM(de.amount),0) FROM deliver
 $currDelCost = (float)$pdo->query("
     SELECT COALESCE(SUM(
         CASE 
-            WHEN di.square_feet > 0 THEN (di.qty - COALESCE(di.damaged_qty,0)) * di.square_feet * di.cost_price 
+            WHEN di.item_source = 'container' THEN (di.qty - COALESCE(di.damaged_qty,0)) * di.square_feet * di.cost_price 
             ELSE (di.qty - COALESCE(di.damaged_qty,0)) * di.cost_price 
         END
     ),0) 
@@ -432,8 +432,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
         
         body {
             font-family: 'Inter', sans-serif;
-            background: #f8fafc url('../assests/glass_bg.png') no-repeat center center fixed;
-            background-size: cover;
+            background: #fff;
             min-height: 100vh;
         }
 
@@ -638,7 +637,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
                 <div class="stat-icon bg-amber-100/50 text-amber-600 mb-4">
                     <i class="fa-solid fa-money-check-dollar text-2xl"></i>
                 </div>
-                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Employee Salary Payments</p>
+                <p class="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Salary Paid to Staff</p>
                 <h2 class="text-3xl font-black text-amber-600 tracking-tighter">LKR <?php echo number_format($total_emp_payments, 2); ?></h2>
           
             </div>                 
@@ -700,7 +699,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'export_excel') {
                 </div>
                 <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Business Profit</p>
                 <h2 class="text-3xl font-black text-white tracking-tighter">LKR <?php echo number_format($total_business_profit, 2); ?></h2>
-                <p class="text-[9px] text-slate-400 mt-2 font-medium italic">(Delivery + POS - Salaries - Other Purchases - Overheads)</p>
+                <p class="text-[9px] text-slate-400 mt-2 font-medium italic">(Delivery + POS - Staff Salary Paid - Other Purchases - Overheads)</p>
             </div>
         </div>
 

@@ -334,7 +334,7 @@ if ($action === 'delete_pos_sale') {
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@300;400;600;700&display=swap');
-        body { font-family: 'Inter', sans-serif; background: url('../assests/glass_bg.png') no-repeat center center fixed; background-size: cover; color: #1e293b; min-height: 100vh; }
+        body { font-family: 'Inter', sans-serif; background: #fff; color: #1e293b; min-height: 100vh; }
         .glass-header { background: rgba(248,250,252,0.96); backdrop-filter: blur(20px); border-bottom: 1px solid rgba(226,232,240,0.8); box-shadow: 0 4px 20px -5px rgba(0,0,0,0.05); }
         .glass-card { background: rgba(255,255,255,0.88); backdrop-filter: blur(20px); border: 1px solid white; border-radius: 24px; box-shadow: 0 10px 30px -5px rgba(0,0,0,0.04); }
         .input-glass { background: rgba(255,255,255,0.6); border: 1px solid #e2e8f0; padding: 10px 14px; border-radius: 12px; outline: none; transition: all 0.3s; font-size: 14px; font-weight: 700; color: #0f172a; }

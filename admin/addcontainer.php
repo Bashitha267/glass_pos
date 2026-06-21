@@ -250,6 +250,18 @@ if ($action == 'delete_container') {
         $container_id = $_POST['container_id'];
         $pdo->beginTransaction();
 
+        // Safety check: Prevent deleting container_items that are already referenced by delivery_items
+        $checkStmt = $pdo->prepare("
+            SELECT COUNT(*)
+            FROM delivery_items di
+            JOIN container_items ci ON di.item_source = 'container' AND di.item_id = ci.id
+            WHERE ci.container_id = ?
+        ");
+        $checkStmt->execute([$container_id]);
+        if ($checkStmt->fetchColumn() > 0) {
+            throw new Exception("Cannot delete this container because one or more items are already used in deliveries. Delete the delivery records first.");
+        }
+
         // Delete dependencies first
         $pdo->prepare("DELETE FROM container_items WHERE container_id = ?")->execute([$container_id]);
         $pdo->prepare("DELETE FROM container_expenses WHERE container_id = ?")->execute([$container_id]);
@@ -450,10 +462,27 @@ if ($action == 'get_purchase_details') {
 }
 
 if ($action == 'delete_purchase') {
-    $id = $_POST['id'];
-    $stmt = $pdo->prepare("DELETE FROM other_purchases WHERE id = ?");
-    $stmt->execute([$id]);
-    echo json_encode(['success' => $stmt->rowCount() > 0]);
+    try {
+        $id = $_POST['id'];
+
+        // Safety check: Prevent deleting other_purchase_items that are already referenced by delivery_items
+        $checkStmt = $pdo->prepare("
+            SELECT COUNT(*)
+            FROM delivery_items di
+            JOIN other_purchase_items opi ON di.item_source = 'other' AND di.item_id = opi.id
+            WHERE opi.purchase_id = ?
+        ");
+        $checkStmt->execute([$id]);
+        if ($checkStmt->fetchColumn() > 0) {
+            throw new Exception("Cannot delete this purchase because one or more items are already used in deliveries. Delete the delivery records first.");
+        }
+
+        $stmt = $pdo->prepare("DELETE FROM other_purchases WHERE id = ?");
+        $stmt->execute([$id]);
+        echo json_encode(['success' => $stmt->rowCount() > 0]);
+    } catch (Exception $e) {
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+    }
     exit;
 }
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['action'] == 'save_container') {
@@ -555,16 +584,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
         }
 
         // 3. Handle Items & Brands
-        // Fetch existing sold_qty to preserve them
-        $oldSold = [];
+        // Fetch existing container_items (keyed by brand_id) to preserve IDs used in delivery_items
+        $existingItems = []; // brand_id => full row
         if ($old_container) {
-            $stmt = $pdo->prepare("SELECT brand_id, sold_qty FROM container_items WHERE container_id = ?");
+            $stmt = $pdo->prepare("SELECT id, brand_id, sold_qty FROM container_items WHERE container_id = ?");
             $stmt->execute([$old_container['id']]);
-            $oldSold = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
+            foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                $existingItems[$row['brand_id']] = $row;
+            }
         }
 
-        // Clear existing items for this container if updating
-        $pdo->prepare("DELETE FROM container_items WHERE container_id = ?")->execute([$container_id]);
+        // Track which brand_ids appear in the submitted form
+        $submittedBrandIds = [];
 
         foreach ($items as $item) {
             $brand_name = trim($item['brand']);
@@ -582,19 +613,47 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['action']) && $_POST['a
                 $brand_id = $pdo->lastInsertId();
             }
 
+            $submittedBrandIds[] = $brand_id;
+
             $pallets = (int) $item['pallets'];
             $qty_per_pallet = (int) $item['qty_per_pallet'];
             $square_feet = (float) ($item['square_feet'] ?? 0);
             $line_total = $pallets * $qty_per_pallet;
             $line_total_sqft = $line_total * $square_feet;
 
-            $sold = $oldSold[$brand_id] ?? 0;
-            if ($line_total < $sold) {
-                throw new Exception("New quantity for $brand_name ($line_total) cannot be less than already transferred quantity ($sold).");
+            if (isset($existingItems[$brand_id])) {
+                // Row already exists — UPDATE it to preserve the primary key (id)
+                $existing = $existingItems[$brand_id];
+                $sold = (int) $existing['sold_qty'];
+                if ($line_total < $sold) {
+                    throw new Exception("New quantity for $brand_name ($line_total) cannot be less than already transferred quantity ($sold).");
+                }
+                $stmt = $pdo->prepare("UPDATE container_items SET pallets=?, qty_per_pallet=?, square_feet=?, total_qty=?, total_sqft=?, sold_qty=? WHERE id=?");
+                $stmt->execute([$pallets, $qty_per_pallet, $square_feet, $line_total, $line_total_sqft, $sold, $existing['id']]);
+            } else {
+                // Brand not in this container yet — INSERT a new row
+                $stmt = $pdo->prepare("INSERT INTO container_items (container_id, brand_id, pallets, qty_per_pallet, square_feet, total_qty, total_sqft, sold_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                $stmt->execute([$container_id, $brand_id, $pallets, $qty_per_pallet, $square_feet, $line_total, $line_total_sqft, 0]);
             }
+        }
 
-            $stmt = $pdo->prepare("INSERT INTO container_items (container_id, brand_id, pallets, qty_per_pallet, square_feet, total_qty, total_sqft, sold_qty) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->execute([$container_id, $brand_id, $pallets, $qty_per_pallet, $square_feet, $line_total, $line_total_sqft, $sold]);
+        // Remove old items that were NOT in the submitted form,
+        // but only if they are NOT referenced by any delivery_items.
+        foreach ($existingItems as $brand_id => $existing) {
+            if (!in_array($brand_id, $submittedBrandIds)) {
+                $item_id = $existing['id'];
+                // Check delivery usage
+                $chkStmt = $pdo->prepare("
+                    SELECT COUNT(*) FROM delivery_items
+                    WHERE item_source = 'container' AND item_id = ?
+                ");
+                $chkStmt->execute([$item_id]);
+                if ($chkStmt->fetchColumn() > 0) {
+                    // Keep the row — it is referenced in deliveries; do not delete
+                    continue;
+                }
+                $pdo->prepare("DELETE FROM container_items WHERE id = ?")->execute([$item_id]);
+            }
         }
 
         // 4. Handle Expenses
@@ -685,6 +744,7 @@ if ($current_tab === 'other') {
 
     $query = "SELECT *, 
               (SELECT GROUP_CONCAT(item_name SEPARATOR ', ') FROM other_purchase_items WHERE purchase_id = other_purchases.id) as item_names,
+              (SELECT GROUP_CONCAT(CONCAT(item_name, '::', COALESCE(qty, 0) - COALESCE(sold_qty, 0)) SEPARATOR '||') FROM other_purchase_items WHERE purchase_id = other_purchases.id) as item_details,
               (SELECT category FROM other_purchase_items WHERE purchase_id = other_purchases.id LIMIT 1) as primary_category,
               (SELECT price_per_sqft FROM other_purchase_items WHERE purchase_id = other_purchases.id LIMIT 1) as unit_cost_sqft,
               (SELECT price_per_item FROM other_purchase_items WHERE purchase_id = other_purchases.id LIMIT 1) as unit_cost_item,
@@ -782,8 +842,7 @@ if ($current_tab === 'other') {
 
         body {
             font-family: 'Inter', sans-serif;
-            background: url('../assests/glass_bg.png') no-repeat center center fixed;
-            background-size: cover;
+            background: #fff;
             color: #0f172a;
             min-height: 100vh;
         }
@@ -983,11 +1042,10 @@ if ($current_tab === 'other') {
                                 class="bg-indigo-700 text-[12px] uppercase tracking-wider text-white border-b border-indigo-800">
                                 <th class="px-3 py-4 font-black">Purchase ID</th>
                                 <th class="px-3 py-4 font-black">Buyer Name</th>
-                                <th class="px-3 py-4 font-black">Item Names</th>
+                                <th class="px-3 py-4 font-black">Item & Stock</th>
                                 <th class="px-3 py-4 font-black">Bill / Invoice</th>
                                 <th class="px-3 py-4 font-black">Date</th>
                                 <th class="px-3 py-4 font-black text-emerald-400">Unit Cost</th>
-                                <th class="px-3 py-4 font-black text-indigo-100 uppercase tracking-wider">Main Stock</th>
                                 <th class="px-3 py-4 font-black text-white uppercase tracking-wider">Shop Stock</th>
                                 <th class="px-3 py-4 font-black text-indigo-100">Total</th>
                                 <th class="px-3 py-4 font-black text-emerald-400">Paid</th>
@@ -1042,9 +1100,26 @@ if ($current_tab === 'other') {
                                     <td class="px-3 py-4 text-sm font-bold text-slate-800">
                                         <?php echo htmlspecialchars($r['buyer_name']); ?>
                                     </td>
-                                    <td class="px-3 py-4 text-sm font-medium text-slate-600 truncate max-w-[150px]"
-                                        title="<?php echo htmlspecialchars($r['item_names'] ?: '-'); ?>">
-                                        <?php echo htmlspecialchars($r['item_names'] ?: '-'); ?>
+                                    <td class="px-3 py-4 text-sm font-medium">
+                                        <?php
+                                        if (!empty($r['item_details'])) {
+                                            $items = explode('||', $r['item_details']);
+                                            foreach ($items as $item) {
+                                                $parts = explode('::', $item);
+                                                if (count($parts) === 2) {
+                                                    $itemName = htmlspecialchars($parts[0]);
+                                                    $remaining = (int)$parts[1];
+                                                    $stockColor = $remaining <= 0 ? 'text-rose-600' : 'text-emerald-600';
+                                                    echo '<div class="text-[13px] mb-1 last:mb-0">';
+                                                    echo '  <span class="text-slate-800 font-semibold">' . $itemName . '</span> - ';
+                                                    echo '  <span class="' . $stockColor . ' font-bold">' . $remaining . '</span>';
+                                                    echo '</div>';
+                                                }
+                                            }
+                                        } else {
+                                            echo '-';
+                                        }
+                                        ?>
                                     </td>
                                     <td class="px-3 py-4 text-sm text-slate-500 italic">
                                         <?php echo htmlspecialchars($r['bill_number'] ?: '-'); ?>
@@ -1060,12 +1135,6 @@ if ($current_tab === 'other') {
                                             <span class="text-[10px] text-slate-400 block uppercase">Per Item</span>
                                             Rs. <?php echo number_format($r['unit_cost_item'], 2); ?>
                                         <?php endif; ?>
-                                    </td>
-                                    <td class="px-3 py-4">
-                                        <div class="flex flex-col">
-                                            <span class="text-sm font-black text-slate-800"><?php echo number_format($r['main_stock_qty']); ?></span>
-                                            <span class="text-[9px] text-slate-400 font-bold uppercase tracking-widest">Remaining</span>
-                                        </div>
                                     </td>
                                     <td class="px-3 py-4">
                                         <?php if ($r['shop_stock_qty'] <= 0): ?>
@@ -3306,6 +3375,19 @@ if ($current_tab === 'other') {
                 if (data.success) location.reload(); else { alert(data.message); btn.disabled = false; btn.innerText = 'Confirm Save Payment'; }
             });
         }
+
+        // Prevent scroll from changing number input values
+        document.addEventListener('wheel', function(e) {
+            if (document.activeElement.type === 'number') {
+                document.activeElement.blur();
+            }
+        }, { passive: false });
+
+        document.addEventListener('keydown', function(e) {
+            if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && document.activeElement.type === 'number') {
+                e.preventDefault();
+            }
+        });
     </script>
 </body>
 </html>

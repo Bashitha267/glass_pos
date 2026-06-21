@@ -86,17 +86,16 @@ $dash_total_profit = ($del_revenue - $dash_total_cost - $dash_total_expenses) + 
 
         body {
             font-family: 'Inter', sans-serif;
-            background: url('../assests/glass_bg.png') no-repeat center center fixed;
-            background-size: cover;
+            background: #fff;
             color: #0f172a;
             min-height: 100vh;
         }
 
         .glass-header {
-            background: rgba(241, 245, 249, 0.98);
-            backdrop-filter: blur(20px);
-            border-bottom: 1px solid rgba(226, 232, 240, 0.8);
-            box-shadow: 0 2px 15px -3px rgba(0, 0, 0, 0.07);
+            background: #cbd5e1;
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid #94a3b8;
+            box-shadow: 0 2px 20px -4px rgba(0, 0, 0, 0.16);
         }
 
         .glass-card {

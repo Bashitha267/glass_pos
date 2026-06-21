@@ -203,12 +203,12 @@ foreach ($customers as &$c) {
     $stmt = $pdo->prepare("
         SELECT di.*, 
         CASE 
-            WHEN di.item_source = 'container' THEN b.name 
-            ELSE opi.item_name 
+            WHEN di.item_source = 'container' THEN COALESCE(b.name, CONCAT('Deleted Container Item #', di.item_id))
+            ELSE COALESCE(opi.item_name, CONCAT('Deleted Other Item #', di.item_id))
         END as brand_name,
         CASE 
-            WHEN di.item_source = 'container' THEN con.container_number 
-            ELSE op.purchase_number 
+            WHEN di.item_source = 'container' THEN COALESCE(con.container_number, CONCAT('[Deleted Container]'))
+            ELSE COALESCE(op.purchase_number, CONCAT('[Deleted Purchase]'))
         END as container_number 
         FROM delivery_items di 
         LEFT JOIN container_items ci ON di.item_id = ci.id AND di.item_source = 'container'
@@ -245,9 +245,23 @@ $total_damage_loss = 0;
 foreach ($customers as $c) {
     $total_revenue += (float)$c['subtotal'];
     $total_discount += (float)$c['discount'];
+
     foreach ($c['items'] as $it) {
-        $total_cogs += (($it['qty'] - $it['damaged_qty']) * $it['square_feet'] * $it['cost_price']);
-        $total_damage_loss += ($it['damaged_qty'] * $it['square_feet'] * $it['cost_price']);
+        $qty        = (float)$it['qty'];
+        $damagedQty = (float)$it['damaged_qty'];
+        $goodQty    = max(0, $qty - $damagedQty);
+        $sqft       = (float)$it['square_feet'];
+        $costPrice  = (float)$it['cost_price'];
+
+        if ($it['item_source'] === 'container') {
+            // cost_price is per sqft
+            $total_cogs        += $goodQty * $sqft * $costPrice;
+            $total_damage_loss += $damagedQty * $sqft * $costPrice;
+        } else {
+            // cost_price is already per sheet/item — do NOT multiply by square_feet
+            $total_cogs        += $goodQty * $costPrice;
+            $total_damage_loss += $damagedQty * $costPrice;
+        }
     }
 }
 $total_paid = 0; foreach($customers as $c) $total_paid += $c['total_paid'];
@@ -263,7 +277,7 @@ $pending_payment = $total_revenue - $total_paid;
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@300;400;600;700&display=swap');
-        body { font-family: 'Inter', sans-serif; background: url('../assests/glass_bg.png') no-repeat center center fixed; background-size: cover; color: #1e293b; min-height: 100vh; }
+        body { font-family: 'Inter', sans-serif; background: #fff; color: #1e293b; min-height: 100vh; }
         .glass-header { background: rgba(248, 250, 252, 0.96); backdrop-filter: blur(20px); border-bottom: 1px solid rgba(226, 232, 240, 0.8); box-shadow: 0 4px 20px -5px rgba(0, 0, 0, 0.05); }
         .glass-card { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(20px); border: 1px solid white; border-radius: 24px; box-shadow: 0 10px 30px -5px rgba(0,0,0,0.04); }
         .input-glass { background: rgba(255, 255, 255, 0.6); border: 1px solid #e2e8f0; padding: 10px 16px; border-radius: 14px; outline: none; transition: all 0.3s; font-size: 13px; font-weight: 600; }
@@ -691,7 +705,7 @@ $pending_payment = $total_revenue - $total_paid;
                         <span class="text-md font-black">LKR <?php echo number_format($total_revenue, 2); ?></span>
                     </div>
                     <?php
-                    $net_estimated = $total_revenue - $total_cogs - $total_damage_loss - $delivery['total_expenses'];
+                    $net_estimated = $total_revenue - $total_discount - $total_cogs - $total_damage_loss - (float)$delivery['total_expenses'];
                     ?>
                     <div class="flex justify-between items-center group">
                         <span class="text-xs font-black text-slate-400 group-hover:text-white transition-colors">Cost of Goods (Sold)</span>

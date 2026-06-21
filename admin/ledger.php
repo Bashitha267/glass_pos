@@ -110,8 +110,7 @@ $ledger = $stmt->fetchAll();
         
         body {
             font-family: 'Inter', sans-serif;
-            background: url('../assests/glass_bg.png') no-repeat center center fixed;
-            background-size: cover;
+            background: #fff;
             color: #0f172a;
             min-height: 100vh;
         }

@@ -488,7 +488,23 @@ $fullQuery = "SELECT * FROM (
     (SELECT GROUP_CONCAT(u.full_name SEPARATOR ', ') FROM delivery_employees de JOIN users u ON de.user_id = u.id WHERE de.delivery_id = d.id) as employee_names,
     (SELECT IFNULL(SUM(subtotal - discount), 0) FROM delivery_customers WHERE delivery_id = d.id) as total_revenue,
     (SELECT IFNULL(SUM(amount), 0) FROM delivery_payments dp JOIN delivery_customers dc ON dp.delivery_customer_id = dc.id WHERE dc.delivery_id = d.id) as got_payments,
-    (d.total_sales - d.total_expenses - IFNULL((SELECT SUM(di.qty * di.square_feet * di.cost_price) FROM delivery_items di JOIN delivery_customers dc ON di.delivery_customer_id = dc.id WHERE dc.delivery_id = d.id), 0)) as est_profit
+    (
+        IFNULL((SELECT SUM(subtotal - discount) FROM delivery_customers WHERE delivery_id = d.id), 0)
+        - d.total_expenses
+        - IFNULL((
+            SELECT SUM(
+                CASE
+                    WHEN di.item_source = 'container'
+                        THEN di.qty * di.square_feet * di.cost_price
+                    ELSE
+                        di.qty * di.cost_price
+                END
+            )
+            FROM delivery_items di
+            JOIN delivery_customers dc ON di.delivery_customer_id = dc.id
+            WHERE dc.delivery_id = d.id
+        ), 0)
+    ) as est_profit
     FROM deliveries d $whereClause
 ) as t $tWhereClause";
 
@@ -516,8 +532,7 @@ $deliveries = $stmt->fetchAll();
         
         body {
             font-family: 'Inter', sans-serif;
-            background: url('../assests/glass_bg.png') no-repeat center center fixed;
-            background-size: cover;
+            background: #fff;
             color: #1e293b;
             min-height: 100vh;
         }
@@ -1363,11 +1378,12 @@ $deliveries = $stmt->fetchAll();
                         </div>
                         
                         <div class="hidden md:grid grid-cols-12 gap-2 px-1 mb-1">
-                            <div class="col-span-4"><span class="text-[8px] uppercase font-black text-slate-400 tracking-wider">Product</span></div>
-                            <div class="col-span-1"><span class="text-[8px] uppercase font-black text-slate-400 tracking-wider">Sheets Qty</span></div>
+                            <div class="col-span-3"><span class="text-[8px] uppercase font-black text-slate-400 tracking-wider">Product</span></div>
+                            <div class="col-span-2"><span class="text-[8px] uppercase font-black text-slate-400 tracking-wider">Sheets Qty</span></div>
                             <div class="col-span-2"><span class="text-[8px] uppercase font-black text-slate-400 tracking-wider">Selling</span></div>
-                            <div class="col-span-2"><span class="text-[8px] uppercase font-black text-red-600 tracking-wider">Damaged</span></div>
-                            <div class="col-span-2"><span class="text-[8px] uppercase font-black text-slate-400 tracking-wider">Disc. / SQFT</span></div>
+                            <div class="col-span-1"><span class="text-[8px] uppercase font-black text-red-600 tracking-wider">Damaged</span></div>
+                            <div class="col-span-1"><span class="text-[8px] uppercase font-black text-slate-400 tracking-wider">Disc. / SQFT</span></div>
+                            <div class="col-span-3"><span class="text-[8px] uppercase font-black text-emerald-600 tracking-wider">Line Total</span></div>
                         </div>
 
                         <div class="order-items space-y-3 md:space-y-1"></div>
@@ -1473,12 +1489,15 @@ $deliveries = $stmt->fetchAll();
                         <div class="col-span-3 md:col-span-2">
                             <input type="number" placeholder="0.00" class="input-glass w-full h-[36px] text-xs font-bold item-price" onkeyup="calculateTotals()">
                         </div>
-                        <div class="col-span-2 md:col-span-2">
+                        <div class="col-span-2 md:col-span-1">
                             <input type="number" placeholder="Dmg" class="input-glass w-full h-[36px] text-[10px] font-bold item-dmg border-red-100 text-red-600" onkeyup="calculateTotals()" title="Damaged Qty">
                         </div>
-                        <div class="col-span-3 md:col-span-2 relative">
+                        <div class="col-span-3 md:col-span-1 relative">
                             <input type="number" placeholder="0.00" class="input-glass w-full h-[36px] text-[10px] font-bold item-discount" onkeyup="calculateTotals()" title="Discount per SQFT">
                             <div class="absolute -top-2.5 right-2 bg-indigo-100 text-indigo-700 text-[8px] font-black px-1 rounded uppercase">/ SQFT</div>
+                        </div>
+                        <div class="hidden md:flex col-span-2 items-center justify-center">
+                            <span class="item-line-total text-[11px] font-black text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-xl px-2 py-1 w-full text-center tracking-tight">LKR 0.00</span>
                         </div>
                         <div class="col-span-1 text-center text-slate-300 hover:text-rose-500 cursor-pointer" onmousedown="document.getElementById('item-${id}').remove(); calculateTotals();">
                             <i class="fa-solid fa-minus-circle text-[10px]"></i>
@@ -1698,6 +1717,10 @@ $deliveries = $stmt->fetchAll();
                     totalRev += lineTotal;
                     totalCost += ((q - dmg) * sqft * cp);
                     totalDamageLoss += (dmg * sqft * cp);
+
+                    // Update per-row line total display
+                    const lineTotalEl = row.closest('.space-y-1')?.querySelector('.item-line-total');
+                    if (lineTotalEl) lineTotalEl.innerText = `LKR ${lineTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
                 });
                 const subtotalEl = block.querySelector('.customer-subtotal');
                 if(subtotalEl) subtotalEl.innerText = `LKR ${customerSubtotal.toLocaleString()}`;
@@ -2098,6 +2121,19 @@ $deliveries = $stmt->fetchAll();
         // Track changes globally
         document.getElementById('route-form').addEventListener('input', () => { isDirty = true; });
         document.getElementById('route-form').addEventListener('change', () => { isDirty = true; });
+
+        // Prevent scroll from changing number input values
+        document.addEventListener('wheel', function(e) {
+            if (document.activeElement.type === 'number') {
+                document.activeElement.blur();
+            }
+        }, { passive: false });
+
+        document.addEventListener('keydown', function(e) {
+            if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && document.activeElement.type === 'number') {
+                e.preventDefault();
+            }
+        });
     </script>
 </body>
 </html>
